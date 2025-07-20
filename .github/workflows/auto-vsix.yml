@@ -1,0 +1,97 @@
+name: Auto VSIX Package
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-and-package:
+    name: Build and Package VSIX
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build extension
+        run: npm run package
+
+      - name: Create VSIX package
+        run: |
+          npm install -g @vscode/vsce
+          vsce package --no-yarn
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: behave-test-runner-vsix
+          path: behave-test-runner-*.vsix
+          retention-days: 30
+
+      - name: Create Release (on main/master only)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          draft: false
+          prerelease: false
+
+      - name: Upload VSIX to Release (on main/master only)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./behave-test-runner-*.vsix
+          asset_name: behave-test-runner-v${{ github.run_number }}.vsix
+          asset_content_type: application/octet-stream
+
+  publish-to-marketplace:
+    name: Publish to VS Code Marketplace
+    needs: build-and-package
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: behave-test-runner-vsix
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+      - name: Publish to Marketplace
+        env:
+          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+        run: |
+          vsce publish --packagePath behave-test-runner-*.vsix --pat $VSCE_TOKEN

@@ -1,0 +1,65 @@
+# Source files (not needed in production)
+src/**/*.ts
+src/**/*.tsx
+src/**/*.js
+src/**/*.jsx
+
+# Test files
+src/test/
+test/
+tests/
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+
+# Build artifacts (keep dist/ for production)
+out/
+build/
+*.tsbuildinfo
+
+# Development files
+.vscode/
+.github/
+.husky/
+node_modules/
+.git/
+.gitignore
+
+# Configuration files (development only)
+tsconfig.json
+eslint.config.mjs
+commitlint.config.js
+.versionrc.js
+.huskyrc
+.eslintrc*
+
+# Documentation (optional - remove if you want docs in package)
+*.md
+!README.md
+!LICENSE*
+
+# Development scripts
+scripts/
+*.sh
+
+# IDE files
+.vscode-test/
+.vscode-test.json
+*.code-workspace
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

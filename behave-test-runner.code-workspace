@@ -1,0 +1,27 @@
+{
+  "folders": [
+    {
+      "name": "Behave Test Runner Extension",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "behaveTestRunner.behaveCommand": "python3 -m behave",
+    "behaveTestRunner.workingDirectory": "",
+    "behaveTestRunner.autoDiscoverTests": true,
+    "behaveTestRunner.testFilePattern": "**/*.feature",
+    "behaveTestRunner.enableCodeLens": true,
+    "behaveTestRunner.enableTestExplorer": true,
+    "behaveTestRunner.priority": "normal",
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/out": true,
+      "**/.vscode-test": true,
+      "**/*.vsix": true
+    }
+  },
+  "extensions": {
+    "recommendations": ["ms-vscode.vscode-json", "ms-python.python"]
+  }
+}

@@ -1,0 +1,400 @@
+{
+  "name": "behave-test-runner",
+  "displayName": "Behave Test Runner",
+  "description": "VS Code extension for Behave test discovery and running",
+  "version": "1.0.0",
+  "icon": "icon.png",
+  "publisher": "upscaled-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/upscaled-dev/behave-vsc-extension.git"
+  },
+  "homepage": "https://github.com/upscaled-dev/behave-vsc-extension#readme",
+  "bugs": {
+    "url": "hhttps://github.com/upscaled-dev/behave-vsc-extension/issues"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Testing",
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "behave",
+    "gherkin",
+    "bdd",
+    "testing",
+    "python",
+    "cucumber",
+    "behavior-driven-development",
+    "test-runner",
+    "feature-files"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:gherkin",
+    "onLanguage:feature",
+    "onCommand:behaveTestRunner.discoverTests",
+    "onCommand:behaveTestRunner.refreshTests",
+    "onCommand:behaveTestRunner.runAllTests"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Behave Test Runner",
+      "properties": {
+        "behaveTestRunner.behaveCommand": {
+          "type": "string",
+          "default": "behave",
+          "description": "Command to run Behave tests (e.g., 'behave', 'python -m behave')"
+        },
+        "behaveTestRunner.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for running tests (empty = workspace root)"
+        },
+        "behaveTestRunner.autoDiscoverTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically discover and load test files on startup"
+        },
+        "behaveTestRunner.testFilePattern": {
+          "type": "string",
+          "default": "**/*.feature",
+          "description": "Glob pattern for test file discovery"
+        },
+        "behaveTestRunner.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable CodeLens buttons on feature files (disable if conflicting with other extensions)"
+        },
+        "behaveTestRunner.enableTestExplorer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Test Explorer integration (disable if conflicting with other test explorers)"
+        },
+        "behaveTestRunner.priority": {
+          "type": "string",
+          "enum": [
+            "high",
+            "normal",
+            "low"
+          ],
+          "default": "normal",
+          "description": "Extension priority for handling feature files (use 'low' if other extensions should take precedence)"
+        },
+        "behaveTestRunner.parallelExecution": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable parallel execution of feature files"
+        },
+        "behaveTestRunner.maxParallelProcesses": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum number of parallel processes for test execution"
+        },
+        "behaveTestRunner.outputFormat": {
+          "type": "string",
+          "enum": [
+            "pretty",
+            "plain",
+            "json",
+            "junit",
+            "progress",
+            "steps"
+          ],
+          "default": "pretty",
+          "description": "Output format for behave test results"
+        },
+        "behaveTestRunner.tags": {
+          "type": "string",
+          "default": "",
+          "description": "Default tags to filter tests (e.g., '@smoke,@regression')"
+        },
+        "behaveTestRunner.dryRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable dry run mode to see what tests would be executed without running them"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "behaveTestRunner.discoverTests",
+        "title": "Behave: Discover Tests",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.refreshTests",
+        "title": "Behave: Refresh Tests",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runAllTests",
+        "title": "Behave: Run All Tests",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runScenario",
+        "title": "Behave: Run Scenario",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.debugScenario",
+        "title": "Behave: Debug Scenario",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runAllTestsParallel",
+        "title": "Behave: Run All Tests in Parallel",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runFeatureFile",
+        "title": "Behave: Run Feature File",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runScenarioWithTags",
+        "title": "Behave: Run Scenario with Tags",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runFeatureFileWithTags",
+        "title": "Behave: Run Feature File with Tags",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runScenarioWithContext",
+        "title": "Behave: Run Scenario (Context)",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.debugScenarioWithContext",
+        "title": "Behave: Debug Scenario (Context)",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.runFeatureFileWithContext",
+        "title": "Behave: Run Feature File (Context)",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setOrganizationStrategy",
+        "title": "Behave: Set Organization Strategy",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setTagBasedOrganization",
+        "title": "Behave: Organize by Tags",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setFileBasedOrganization",
+        "title": "Behave: Organize by File",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setScenarioTypeOrganization",
+        "title": "Behave: Organize by Scenario Type",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setFlatOrganization",
+        "title": "Behave: Flat Organization",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.setFeatureBasedOrganization",
+        "title": "Behave: Hierarchical Organization",
+        "category": "Behave Test Runner"
+      },
+      {
+        "command": "behaveTestRunner.debugOrganization",
+        "title": "Behave: Debug Organization Strategy",
+        "category": "Behave Test Runner"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "behaveTestRunner.discoverTests",
+          "when": "resourceExtname == .feature"
+        },
+        {
+          "command": "behaveTestRunner.refreshTests",
+          "when": "resourceExtname == .feature"
+        },
+        {
+          "command": "behaveTestRunner.runAllTests",
+          "when": "resourceExtname == .feature"
+        },
+        {
+          "command": "behaveTestRunner.runAllTestsParallel",
+          "when": "resourceExtname == .feature"
+        },
+        {
+          "command": "behaveTestRunner.runFeatureFile",
+          "when": "resourceExtname == .feature"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "behaveTestRunner.runScenarioWithContext",
+          "when": "resourceExtname == .feature && editorTextFocus && resourceScheme == file",
+          "group": "behaveTestRunner@1"
+        },
+        {
+          "command": "behaveTestRunner.debugScenarioWithContext",
+          "when": "resourceExtname == .feature && editorTextFocus && resourceScheme == file",
+          "group": "behaveTestRunner@2"
+        },
+        {
+          "command": "behaveTestRunner.runFeatureFileWithContext",
+          "when": "resourceExtname == .feature && editorTextFocus && resourceScheme == file",
+          "group": "behaveTestRunner@3"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "behaveTestRunner.runFeatureFileWithContext",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@1"
+        },
+        {
+          "command": "behaveTestRunner.runAllTests",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@2"
+        },
+        {
+          "command": "behaveTestRunner.refreshTests",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "behaveTestRunner.runFeatureFile",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@1"
+        },
+        {
+          "command": "behaveTestRunner.runAllTests",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@2"
+        },
+        {
+          "command": "behaveTestRunner.refreshTests",
+          "when": "resourceExtname == .feature && resourceScheme == file",
+          "group": "behaveTestRunner@3"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "submenu": "behaveTestRunner.organizationSubmenu",
+          "group": "behaveTestRunner@1"
+        }
+      ],
+      "testing/view/context": [
+        {
+          "command": "behaveTestRunner.discoverTests",
+          "group": "behaveTestRunner@1"
+        }
+      ],
+      "behaveTestRunner.organizationSubmenu": [
+        {
+          "command": "behaveTestRunner.setTagBasedOrganization"
+        },
+        {
+          "command": "behaveTestRunner.setFileBasedOrganization"
+        },
+        {
+          "command": "behaveTestRunner.setScenarioTypeOrganization"
+        },
+        {
+          "command": "behaveTestRunner.setFlatOrganization"
+        },
+        {
+          "command": "behaveTestRunner.setFeatureBasedOrganization"
+        }
+      ]
+    },
+    "submenus": [
+      {
+        "id": "behaveTestRunner.organizationSubmenu",
+        "label": "Organization Strategy"
+      }
+    ]
+  },
+  "scripts": {
+    "bump:patch": "node -e \"const pkg=require('./package.json'); pkg.version=pkg.version.replace(/\\.(\\d+)$/, (_,n) => '.' + (parseInt(n)+1)); require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n'); console.log('Bumped version to ' + pkg.version);\"",
+    "compile": "npm run check-types && npm run lint && node scripts/build/esbuild.cjs",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node scripts/build/esbuild.cjs --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run bump:patch && npm run check-types && npm run lint && node scripts/build/esbuild.cjs --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "test": "node ./out/test/runTest.js",
+    "test:fast": "npm run compile-tests && node ./out/test/runTest.js",
+    "test:all": "npm run test:fast",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "test:unit": "vscode-test --grep \"Unit Tests\"",
+    "test:parser": "vscode-test --grep \"FeatureParser Unit Tests\"",
+    "test:integration": "vscode-test --grep \"Integration Test Suite\"",
+    "test:execution": "vscode-test --grep \"TestExecutor Unit Tests\"",
+    "test:logger": "vscode-test --grep \"Logger Unit Tests\"",
+    "test:commands": "vscode-test --grep \"CommandManager Unit Tests\"",
+    "test:verbose": "vscode-test --verbose",
+    "test:coverage": "npm test && echo 'Coverage report would be generated here'",
+    "test:runner": "node scripts/test/run-tests.js",
+    "clean": "rimraf dist out",
+    "build": "npm run clean && npm run compile",
+    "dev": "npm run watch",
+    "version": "standard-version",
+    "release": "standard-version",
+    "release:patch": "standard-version --release-as patch",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major",
+    "package:vsix": "npm run package && vsce package --no-yarn --out dist/behave-test-runner-$(node -p \"require('./package.json').version\").vsix",
+    "release:vsix": "npm run release && npm run package:vsix",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.0.0",
+    "@commitlint/config-conventional": "^18.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.99.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "commitizen": "^4.3.0",
+    "cz-conventional-changelog": "^3.3.0",
+    "esbuild": "^0.25.3",
+    "eslint": "^9.25.1",
+    "husky": "^8.0.3",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^5.0.10",
+    "standard-version": "^9.5.0",
+    "typescript": "^5.8.3"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  },
+  "attribution": {
+    "icon": "Designed by Freepik from https://www.freepik.com/"
+  }
+}
