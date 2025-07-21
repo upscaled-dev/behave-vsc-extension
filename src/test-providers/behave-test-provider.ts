@@ -830,6 +830,24 @@ export class BehaveTestProvider {
 
               // Mark all child tests based on the feature file result
               this.markAllChildrenBasedOnResult(test, run, testResult);
+            } else if (test.id.includes(":outline:")) {
+              // Scenario outline node: run all examples by outline name
+              const filePath = test.uri.fsPath;
+              // Extract outline name from test.id: /path/to/file.feature:outline:Outline Name
+              const outlineMatch = test.id.match(/:outline:(.+)$/);
+              const outlineName = outlineMatch ? outlineMatch[1] : test.label.replace(/^Scenario Outline: /, "");
+              Logger.getInstance().info(
+                `Running scenario outline: ${outlineName} in ${filePath}`
+              );
+              // Run behave with --name="<outlineName>"
+              await this.testExecutor.runScenario({
+                filePath,
+                scenarioName: outlineName ?? "",
+              });
+              testResult = await this.testExecutor.runScenarioWithOutput({
+                filePath,
+                scenarioName: outlineName ?? "",
+              });
             } else if (isGroupTest) {
               // Run all scenarios in the group
               Logger.getInstance().info(

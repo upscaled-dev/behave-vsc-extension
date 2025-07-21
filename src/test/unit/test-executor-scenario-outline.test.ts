@@ -162,4 +162,67 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
       "Should return original name for malformed scenario outline example"
     );
   });
+
+  test("Should run all examples when running a scenario outline", async () => {
+    // Arrange: mock a feature file with a scenario outline and two examples
+    const featureContent = `
+Feature: Login
+  Scenario Outline: Login with different credentials
+    Given I am on the login page
+    When I enter "<username>" and "<password>"
+    Then I should see "<result>"
+
+    Examples:
+      | username | password | result |
+      | admin    | secret   | success |
+      | user     | wrong    | error |
+`;
+    const filePath = "/tmp/test-outline.feature";
+    require("fs").writeFileSync(filePath, featureContent);
+
+    // Spy to capture commands sent to the terminal
+    const sentCommands: string[] = [];
+    (testExecutor as any).executeCommand = (cmd: string) => {
+      sentCommands.push(cmd);
+    };
+
+    // Act: run the scenario outline (not an example)
+    await testExecutor.runScenario({
+      filePath,
+      scenarioName: "Login with different credentials",
+    });
+
+    // Should run a single command with --name="Login with different credentials"
+    const expected = '--name="Login with different credentials"';
+    const found = sentCommands.some(cmd => cmd.includes(expected));
+    if (!found) {
+      // eslint-disable-next-line no-console
+      console.log("Sent commands:", sentCommands);
+    }
+    assert.ok(found, `Should run scenario outline with: ${expected}`);
+    assert.strictEqual(sentCommands.length, 1, "Should run exactly 1 command for the outline");
+    require("fs").unlinkSync(filePath);
+  });
+
+  test("Should run all examples for scenario outline in advanced-example.feature", async () => {
+    const filePath = require("path").join(process.cwd(), "features/advanced-example.feature");
+    const scenarioOutlineName = "Load testing with multiple users";
+    const sentCommands: string[] = [];
+    (testExecutor as any).executeCommand = (cmd: string) => {
+      sentCommands.push(cmd);
+    };
+    await testExecutor.runScenario({
+      filePath,
+      scenarioName: scenarioOutlineName,
+    });
+    // Should run a single command with --name="Load testing with multiple users"
+    const expected = '--name="Load testing with multiple users"';
+    const found = sentCommands.some(cmd => cmd.includes(expected));
+    if (!found) {
+      // eslint-disable-next-line no-console
+      console.log("Sent commands:", sentCommands);
+    }
+    assert.ok(found, `Should run scenario outline with: ${expected}`);
+    assert.strictEqual(sentCommands.length, 1, "Should run exactly 1 command for the outline");
+  });
 });

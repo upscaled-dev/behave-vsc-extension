@@ -4,6 +4,7 @@ import { TestExecutor } from "../../core/test-executor.js";
 import { TestExecutionOptions } from "../../types/index.js";
 import { PythonDetector } from '../../utils/python-detector';
 import { expect } from 'chai';
+import { CommandManager } from '../../commands/command-manager';
 
 suite("TestExecutor Unit Tests", () => {
   let testExecutor: TestExecutor;
@@ -621,5 +622,34 @@ suite('PythonDetector', () => {
     const command = await detector.getBestBehaveCommand();
     expect(command).to.equal('/fake/venv/bin/python -m behave');
     detector.clearCache();
+  });
+});
+
+suite('CommandManager TestItemMap', () => {
+  test('should add and retrieve test items from the map', () => {
+    const manager = CommandManager.getInstance();
+    manager.clearTestItemMap();
+    const fakeTestItem = { id: 'test1' } as any;
+    manager.addTestItemToMap('/path/to/file.feature', 10, 'Scenario Name', fakeTestItem);
+    const found = manager.getTestItemFromMap('/path/to/file.feature', 10, 'Scenario Name');
+    expect(found).to.equal(fakeTestItem);
+    manager.clearTestItemMap();
+  });
+
+  test('should clear the map', () => {
+    const manager = CommandManager.getInstance();
+    const fakeTestItem = { id: 'test2' } as any;
+    manager.addTestItemToMap('/path/to/file.feature', 20, 'Another Scenario', fakeTestItem);
+    manager.clearTestItemMap();
+    const found = manager.getTestItemFromMap('/path/to/file.feature', 20, 'Another Scenario');
+    expect(found).to.be.undefined;
+  });
+
+  test('should block test execution when discovery is in progress', () => {
+    const manager = CommandManager.getInstance();
+    manager.setTestDiscoveryInProgress(true);
+    expect(manager.getIsTestRunning()).to.be.true;
+    manager.setTestDiscoveryInProgress(false);
+    expect(manager.getIsTestRunning()).to.be.false;
   });
 });

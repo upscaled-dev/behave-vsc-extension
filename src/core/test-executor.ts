@@ -43,8 +43,7 @@ export class TestExecutor {
    * @param options - Test execution options
    */
   public async runScenario(options: TestExecutionOptions): Promise<void> {
-    const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } =
-      options;
+    const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } = options;
     const workingDir = this.getWorkingDirectory();
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
@@ -55,15 +54,39 @@ export class TestExecutor {
       scenarioName
     );
 
-    let command = `${behaveCommand} "${filePath}${
-      lineNumber ? `:${lineNumber}` : ""
-    }"`;
+    // If scenarioName is a scenario outline (not an example), run all examples in one command
+    if (
+      scenarioName &&
+      !isScenarioOutlineExample &&
+      filePath &&
+      fs.existsSync(filePath)
+    ) {
+      // Run a single command with --name="<outline name>"
+      let command = `${behaveCommand} "${filePath}" --name="${scenarioName}"`;
+      if (tags) {
+        command += ` --tags="${tags}"`;
+        command += " --no-skipped";
+      } else if (this.config.tags) {
+        command += ` --tags="${this.config.tags}"`;
+        command += " --no-skipped";
+      }
+      const format = outputFormat ?? this.config.outputFormat;
+      if (format && format !== "pretty") {
+        command += ` --format=${format}`;
+      }
+      if (dryRun || this.config.dryRun) {
+        command += " --dry-run";
+      }
+      this.executeCommand(command, workingDir);
+      return;
+    }
+
+    let command = `${behaveCommand} "${filePath}${lineNumber ? `:${lineNumber}` : ""}"`;
 
     if (scenarioName) {
       // For scenario outline examples, we need to use the original outline name
       if (isScenarioOutlineExample) {
-        const originalOutlineName =
-          this.extractOriginalOutlineName(scenarioName);
+        const originalOutlineName = this.extractOriginalOutlineName(scenarioName);
         command += ` --name="${originalOutlineName}"`;
       } else {
         command += ` --name="${scenarioName}"`;
@@ -787,14 +810,11 @@ if __name__ == "__main__":
    * Extract the original outline name from a scenario outline example name
    */
   private extractOriginalOutlineName(scenarioName: string): string {
-    // Extract the original outline name from "1: Scenario Name - param1: value1, param2: value2"
-    const match = scenarioName.match(/^\d+:\s*(.+?)\s*-\s*/);
-    const extracted = match?.[1] ?? scenarioName;
-    // Handle edge case where only whitespace was captured
-    const trimmed = extracted.trim();
-    // If the extracted name is empty (like "1: - param: value"), return original scenario name
-    // Otherwise return the trimmed name or original scenario name
-    return trimmed || scenarioName;
+    const match = scenarioName.match(/^(\d+):\s*(.*?)\s*-\s*/);
+    if (match?.[2]) {
+      return match[2].trim();
+    }
+    return scenarioName;
   }
 
   /**

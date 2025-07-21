@@ -27,10 +27,22 @@ export class CommandManager {
   private logger: Logger;
   private testProvider: any; // Will be set by extension
 
+  /**
+   * Map for fast lookup: (filePath, lineNumber, scenarioName) => TestItem
+   */
+  private testItemMap: Map<string, vscode.TestItem> = new Map();
+
+  /**
+   * Flag to serialize test execution
+   */
+  private isTestRunning = false;
+
   private constructor() {
     this.testExecutor = new TestExecutor();
     this.config = ExtensionConfig.getInstance();
     this.logger = Logger.getInstance();
+    this.testItemMap = new Map();
+    this.isTestRunning = false;
   }
 
   /**
@@ -64,42 +76,39 @@ export class CommandManager {
       }
 
       // Find the test item by file path and line number
-      let testItem: vscode.TestItem | undefined;
+      const testItem: vscode.TestItem | undefined = lineNumber
+        ? this.findTestItemByLineNumber(testController, filePath, lineNumber)
+        : testController?.items?.get?.(filePath);
 
-      if (lineNumber) {
-        // For scenarios, look for the specific line number
-        const scenarioId = `${filePath}:${lineNumber}`;
-        testItem =
-          this.findTestItem(testController, scenarioId) ??
-          this.findTestItemByLineNumber(testController, filePath, lineNumber);
-      } else {
-        // For features, look for the file path
-        testItem = this.findTestItem(testController, filePath);
-      }
-
-      if (testItem) {
-        // Create a test run to update the status
+      // Helper to update status for a test item and all children
+      const updateStatusRecursive = (item: vscode.TestItem) => {
         const run = testController.createTestRun(
-          new vscode.TestRunRequest([testItem])
+          new vscode.TestRunRequest([item])
         );
-
         switch (status) {
           case "started":
-            run.started(testItem);
+            run.started(item);
             break;
           case "passed":
-            run.passed(testItem);
+            run.passed(item);
             break;
           case "failed":
-            run.failed(testItem, new vscode.TestMessage("Test failed"));
+            run.failed(item, new vscode.TestMessage("Test failed"));
             break;
         }
-
         run.end();
+        // Recursively update children
+        item.children?.forEach?.((child: vscode.TestItem) => {
+          updateStatusRecursive(child);
+        });
+      };
+
+      if (testItem) {
+        updateStatusRecursive(testItem);
         this.logger.debug(
           `Updated test status for ${
             lineNumber ? `${filePath}:${lineNumber}` : filePath
-          } to ${status}`
+          } to ${status} (including children)`
         );
       } else {
         this.logger.debug(
@@ -179,29 +188,6 @@ export class CommandManager {
     } catch (error) {
       this.logger.error("Failed to update test status for tags", { error });
     }
-  }
-
-  /**
-   * Find a test item by ID recursively
-   */
-  private findTestItem(
-    testController: any,
-    testId: string
-  ): vscode.TestItem | undefined {
-    const findRecursively = (items: any): vscode.TestItem | undefined => {
-      for (const item of items.values()) {
-        if (item.id === testId) {
-          return item;
-        }
-        const child = findRecursively(item.children);
-        if (child) {
-          return child;
-        }
-      }
-      return undefined;
-    };
-
-    return findRecursively(testController.items);
   }
 
   /**
@@ -699,11 +685,11 @@ export class CommandManager {
           );
 
           if (isScenarioOutline) {
-            // For scenario outlines, run without --name parameter to iterate over all examples
+            // For scenario outlines, run with scenarioName to run all examples in one command
             this.logger.info(
               `Running scenario outline: ${
                 scenarioName ?? "unnamed"
-              } (will iterate over all examples)`,
+              } (will run all examples in one command)`,
               {
                 scenarioName,
               }
@@ -713,13 +699,13 @@ export class CommandManager {
             await this.testExecutor.runScenario({
               filePath,
               lineNumber,
-              // Don't pass scenarioName to run all examples
+              ...(scenarioName !== undefined ? { scenarioName } : {}),
             });
 
             testResult = await this.testExecutor.runScenarioWithOutput({
               filePath,
               lineNumber,
-              // Don't pass scenarioName to run all examples
+              ...(scenarioName !== undefined ? { scenarioName } : {}),
             });
           } else {
             // Regular scenario
@@ -1656,5 +1642,49 @@ export class CommandManager {
    */
   private async setFeatureBasedOrganization(): Promise<void> {
     await this.setStrategyByValue("feature");
+  }
+
+  /**
+   * Clear the test item map
+   */
+  public clearTestItemMap(): void {
+    this.testItemMap.clear();
+  }
+
+  /**
+   * Add a test item to the map
+   */
+  public addTestItemToMap(filePath: string, lineNumber: number | undefined, scenarioName: string | undefined, testItem: vscode.TestItem): void {
+    const key = this.getTestItemMapKey(filePath, lineNumber, scenarioName);
+    this.testItemMap.set(key, testItem);
+  }
+
+  /**
+   * Lookup a test item in the map
+   */
+  public getTestItemFromMap(filePath: string, lineNumber: number | undefined, scenarioName: string | undefined): vscode.TestItem | undefined {
+    const key = this.getTestItemMapKey(filePath, lineNumber, scenarioName);
+    return this.testItemMap.get(key);
+  }
+
+  /**
+   * Build the map key
+   */
+  private getTestItemMapKey(filePath: string, lineNumber: number | undefined, scenarioName: string | undefined): string {
+    return `${filePath}:${lineNumber ?? ''}:${scenarioName ?? ''}`;
+  }
+
+  /**
+   * Set a flag to block test execution during discovery/rebuild
+   */
+  public setTestDiscoveryInProgress(inProgress: boolean): void {
+    this.isTestRunning = inProgress;
+  }
+
+  /**
+   * Public getter for isTestRunning (for testing/inspection)
+   */
+  public getIsTestRunning(): boolean {
+    return this.isTestRunning;
   }
 }
