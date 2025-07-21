@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔧 Running pre-push checks..."
+
+# Run tests
+echo "🧪 Running tests..."
+npm test
+
+# Build extension
+echo "🔨 Building extension..."
+npm run package
+
+# Create VSIX package
+echo "📦 Creating VSIX package..."
+npm run package:vsix
+
+echo "✅ Pre-push checks completed successfully!"
+echo "📦 VSIX package created: behave-test-runner-*.vsix"
