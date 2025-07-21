@@ -2,7 +2,7 @@
   "name": "behave-test-runner",
   "displayName": "Behave Test Runner",
   "description": "VS Code extension for Behave test discovery and running",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "icon": "icon.png",
   "publisher": "upscaled-dev",
   "license": "MIT",

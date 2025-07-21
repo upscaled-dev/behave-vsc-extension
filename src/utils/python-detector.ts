@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
 
 const execAsync = promisify(exec);
 
@@ -73,10 +74,37 @@ export class PythonDetector {
   }
 
   /**
-   * Get the best behave command for the current system
-   * @returns Promise<string> The best behave command
+   * Detect if a virtual environment is active by running a Python command
+   * Returns the path to the venv Python if found, else null
+   */
+  public async detectVenvPython(): Promise<string | null> {
+    try {
+      // This command prints the path to the Python executable if in a venv, else empty
+      const { stdout } = await execAsync("python3 -c 'import sys; print(getattr(sys, \"real_prefix\", getattr(sys, \"base_prefix\", None)) != sys.prefix and sys.executable or \"\")'");
+      const pythonPath = stdout.trim();
+      if (pythonPath && fs.existsSync(pythonPath)) {
+        return pythonPath;
+      }
+    } catch {}
+    try {
+      const { stdout } = await execAsync("python -c 'import sys; print(getattr(sys, \"real_prefix\", getattr(sys, \"base_prefix\", None)) != sys.prefix and sys.executable or \"\")'");
+      const pythonPath = stdout.trim();
+      if (pythonPath && fs.existsSync(pythonPath)) {
+        return pythonPath;
+      }
+    } catch {}
+    return null;
+  }
+
+  /**
+   * Get the best behave command, preferring venv Python if found
    */
   public async getBestBehaveCommand(): Promise<string> {
+    // Prefer venv Python if available
+    const venvPython = await this.detectVenvPython();
+    if (venvPython) {
+      return `${venvPython} -m behave`;
+    }
     // First try the direct 'behave' command
     if (await this.testBehaveCommand('behave')) {
       return 'behave';

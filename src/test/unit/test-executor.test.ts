@@ -2,6 +2,8 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 import { TestExecutor } from "../../core/test-executor.js";
 import { TestExecutionOptions } from "../../types/index.js";
+import { PythonDetector } from '../../utils/python-detector';
+import { expect } from 'chai';
 
 suite("TestExecutor Unit Tests", () => {
   let testExecutor: TestExecutor;
@@ -606,5 +608,18 @@ suite("TestExecutor Unit Tests", () => {
 
     // Restore original function
     vscode.window.createTerminal = originalCreateTerminal;
+  });
+});
+
+suite('PythonDetector', () => {
+  test('should prefer venv python if detected', async () => {
+    const detector = PythonDetector.getInstance();
+    // Mock detectVenvPython to return a fake venv path
+    detector.detectVenvPython = async () => '/fake/venv/bin/python';
+    // Mock testBehaveCommand to always return false for direct behave, true for venv
+    detector.testBehaveCommand = async (cmd: string) => cmd.startsWith('/fake/venv/bin/python');
+    const command = await detector.getBestBehaveCommand();
+    expect(command).to.equal('/fake/venv/bin/python -m behave');
+    detector.clearCache();
   });
 });
