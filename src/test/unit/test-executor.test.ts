@@ -653,3 +653,24 @@ suite('CommandManager TestItemMap', () => {
     expect(manager.getIsTestRunning()).to.be.false;
   });
 });
+
+test('Should run only the specific scenario outline example from CodeLens', async () => {
+  const manager = CommandManager.getInstance();
+  // Spy on testExecutor.runScenario
+  let calledWith: any = null;
+  manager['testExecutor'].runScenario = async (opts: any) => {
+    calledWith = opts;
+    return Promise.resolve();
+  };
+  manager['testExecutor'].runScenarioWithOutput = async (opts: any) => {
+    calledWith = opts;
+    return { success: true, duration: 1, output: '', error: "" };
+  };
+  // Simulate running a scenario outline example from CodeLens
+  const filePath = '/path/to/file.feature';
+  const lineNumber = 10;
+  const scenarioName = '1: Login with different credentials - username: admin, password: secret, result: success';
+  await manager['runScenario'](filePath, lineNumber, scenarioName);
+  // Should run only the specific example
+  expect(calledWith).to.include({ filePath, lineNumber, scenarioName });
+});

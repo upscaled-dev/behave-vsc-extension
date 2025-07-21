@@ -52,35 +52,6 @@ suite("Command Manager Unit Tests", () => {
     );
   });
 
-  test("Should extract original outline name correctly", () => {
-    // Test original outline name extraction
-    const original1 = (commandManager as any).extractOriginalOutlineName(
-      "1: Load testing with multiple users - user_count: 10, max_response_time: 2"
-    );
-    const original2 = (commandManager as any).extractOriginalOutlineName(
-      "2: Login with different credentials - username: admin, password: admin123, expected_result: dashboard"
-    );
-    const regularScenario = (commandManager as any).extractOriginalOutlineName(
-      "Basic smoke test"
-    );
-
-    assert.strictEqual(
-      original1,
-      "Load testing with multiple users",
-      "Should extract correct outline name 1"
-    );
-    assert.strictEqual(
-      original2,
-      "Login with different credentials",
-      "Should extract correct outline name 2"
-    );
-    assert.strictEqual(
-      regularScenario,
-      "Basic smoke test",
-      "Should return original name for regular scenario"
-    );
-  });
-
   test("Should match tags correctly", () => {
     // Test tag matching functionality
     const itemTags = ["@smoke", "@regression", "@ui"];
@@ -167,51 +138,6 @@ suite("Command Manager Unit Tests", () => {
       matchingItems[0],
       mockTestItem1,
       "Should find the correct test item"
-    );
-  });
-
-  test("Should handle scenario outline execution correctly", () => {
-    // Test that scenario outline examples are handled properly
-    const scenarioName =
-      "1: Load testing with multiple users - user_count: 10, max_response_time: 2";
-    const isExample = (commandManager as any).isScenarioOutlineExample(
-      scenarioName
-    );
-    const originalName = (commandManager as any).extractOriginalOutlineName(
-      scenarioName
-    );
-
-    assert.strictEqual(
-      isExample,
-      true,
-      "Should detect as scenario outline example"
-    );
-    assert.strictEqual(
-      originalName,
-      "Load testing with multiple users",
-      "Should extract correct original name"
-    );
-  });
-
-  test("Should handle regular scenario execution correctly", () => {
-    // Test that regular scenarios are handled properly
-    const scenarioName = "Basic smoke test";
-    const isExample = (commandManager as any).isScenarioOutlineExample(
-      scenarioName
-    );
-    const originalName = (commandManager as any).extractOriginalOutlineName(
-      scenarioName
-    );
-
-    assert.strictEqual(
-      isExample,
-      false,
-      "Should not detect as scenario outline example"
-    );
-    assert.strictEqual(
-      originalName,
-      "Basic smoke test",
-      "Should return original name unchanged"
     );
   });
 

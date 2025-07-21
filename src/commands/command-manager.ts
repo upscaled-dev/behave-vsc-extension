@@ -320,20 +320,6 @@ export class CommandManager {
   }
 
   /**
-   * Extract the original outline name from a scenario outline example name
-   */
-  private extractOriginalOutlineName(scenarioName: string): string {
-    // Extract the original outline name from "1: Scenario Name - param1: value1, param2: value2"
-    const match = scenarioName.match(/^\d+:\s*(.+?)\s*-\s*/);
-    const extracted = match?.[1] ?? scenarioName;
-    // Handle edge case where only whitespace was captured
-    const trimmed = extracted.trim();
-    // If the extracted name is empty (like "1: - param: value"), return original scenario name
-    // Otherwise return the trimmed name or original scenario name
-    return trimmed || scenarioName;
-  }
-
-  /**
    * Check if a scenario is a scenario outline (not an example)
    */
   private isScenarioOutline(
@@ -647,7 +633,7 @@ export class CommandManager {
           this.isScenarioOutlineExample(scenarioName);
 
         if (isScenarioOutlineExample) {
-          // For scenario outline examples, run the entire outline to ensure all examples are executed
+          // For scenario outline examples, run ONLY the specific example (not the whole outline)
           this.logger.info(
             `Running scenario outline example: ${
               scenarioName ?? "unnamed"
@@ -658,22 +644,17 @@ export class CommandManager {
             }
           );
 
-          // Extract the original outline name for the behave command
-          const originalOutlineName = this.extractOriginalOutlineName(
-            scenarioName ?? ""
-          );
-
-          // First, run the scenario in the terminal to show output to user
+          // Run only the specific example by name
           await this.testExecutor.runScenario({
             filePath,
             lineNumber,
-            scenarioName: originalOutlineName,
+            scenarioName: scenarioName ?? "",
           });
 
           testResult = await this.testExecutor.runScenarioWithOutput({
             filePath,
             lineNumber,
-            scenarioName: originalOutlineName,
+            scenarioName: scenarioName ?? "",
           });
         } else {
           // Check if this is a scenario outline (not an example)
