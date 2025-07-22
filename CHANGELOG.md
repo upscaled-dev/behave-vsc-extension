@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## 1.1.0 (2025-07-22)
+
+
+### Features
+
+* initial release - behave test runner ([71d28d7](https://github.com/upscaled-dev/behave-vsc-extension/commit/71d28d70b5077adb1581c99cb6ab653b9391b563))
+* prefer venv python for behave if detected ([3a3b817](https://github.com/upscaled-dev/behave-vsc-extension/commit/3a3b817e17cfe252b6453120a1bc27c397ecb379))
+
+
+### Bug Fixes
+
+* run only selected scenario outline example from codelens ([e37fb59](https://github.com/upscaled-dev/behave-vsc-extension/commit/e37fb59c875b4d05f47aecf8029603416a0b5a34))
+* run scenario outline from gutter runs all examples ([6fbe228](https://github.com/upscaled-dev/behave-vsc-extension/commit/6fbe228c9c861045b83d8b7177063b16e1179415))
+
 ### [0.3.2](https://github.com/your-username/behave-test-runner/compare/v0.3.0...v0.3.2) (2025-01-27)
 
 ### Fixed
