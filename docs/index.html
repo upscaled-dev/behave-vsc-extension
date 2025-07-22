@@ -1,0 +1,381 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Behave Test Runner Extension - v1.1.7</title><meta name="description" content="Documentation for Behave Test Runner Extension"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">Behave Test Runner Extension - v1.1.7</a><div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>Behave Test Runner Extension - v1.1.7</h1></div><div class="tsd-panel tsd-typography"><h1 id="behave-test-runner" class="tsd-anchor-link">Behave Test Runner<a href="#behave-test-runner" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1><p>A VS Code extension for discovering, running, and debugging <a href="https://behave.readthedocs.io/">Behave</a> tests with full integration into the VS Code testing framework.</p>
+<h2 id="features" class="tsd-anchor-link">Features<a href="#features" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li>🔍 <strong>Automatic Test Discovery</strong>: Automatically finds and parses <code>.feature</code> files in your workspace</li>
+<li>▶️ <strong>Run Tests</strong>: Run individual scenarios or entire feature files with a single click</li>
+<li>🐛 <strong>Debug Support</strong>: Debug scenarios with full VS Code debugging capabilities</li>
+<li>📊 <strong>Test Explorer Integration</strong>: View and manage tests in the VS Code Test Explorer with organized hierarchy</li>
+<li>🎯 <strong>CodeLens Support</strong>: Run/debug scenarios directly from the editor with inline buttons</li>
+<li>🏷️ <strong>Tag-based Organization</strong>: Automatically groups scenarios by tags for better organization</li>
+<li>📋 <strong>Scenario Outline Support</strong>: Full support for scenario outlines with individual example tracking</li>
+<li>🔢 <strong>Smart Example Naming</strong>: Clean, numbered examples (1:, 2:, 3:) instead of verbose names</li>
+<li>📏 <strong>Long Column Names Handling</strong>: Intelligently truncates long table column names for readability</li>
+<li>⚙️ <strong>Configurable</strong>: Customize behave command, working directory, and more</li>
+<li>🔄 <strong>Auto-refresh</strong>: Automatically updates when feature files change</li>
+<li>🚀 <strong>Parallel Execution</strong>: Run tests in parallel for faster execution</li>
+<li>🤝 <strong>Extension Compatibility</strong>: Designed to work seamlessly with Cucumber (Gherkin) Full Support</li>
+</ul>
+<h2 id="installation" class="tsd-anchor-link">Installation<a href="#installation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="from-vsix" class="tsd-anchor-link">From VSIX<a href="#from-vsix" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ol>
+<li>Download the latest <code>.vsix</code> file from the <a href="https://github.com/your-username/behave-test-runner/releases">releases page</a></li>
+<li>In VS Code, go to Extensions (Ctrl+Shift+X)</li>
+<li>Click the &quot;...&quot; menu and select &quot;Install from VSIX...&quot;</li>
+<li>Select the downloaded file</li>
+</ol>
+<h3 id="from-source" class="tsd-anchor-link">From Source<a href="#from-source" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="bash"><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">clone</span><span class="hl-1"> </span><span class="hl-2">https://github.com/your-username/behave-test-runner.git</span><br/><span class="hl-0">cd</span><span class="hl-1"> </span><span class="hl-2">behave-test-runner</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">compile</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">package</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="usage" class="tsd-anchor-link">Usage<a href="#usage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="prerequisites" class="tsd-anchor-link">Prerequisites<a href="#prerequisites" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ul>
+<li>Python with Behave installed (<code>pip install behave</code>)</li>
+<li>VS Code 1.99.0 or later</li>
+</ul>
+<h3 id="basic-usage" class="tsd-anchor-link">Basic Usage<a href="#basic-usage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ol>
+<li><strong>Open a workspace</strong> containing <code>.feature</code> files</li>
+<li><strong>Discover tests</strong> by running the &quot;Behave: Discover Tests&quot; command</li>
+<li><strong>View tests</strong> in the Test Explorer (Ctrl+Shift+P → &quot;Testing: Focus on Test Explorer View&quot;)</li>
+<li><strong>Run tests</strong> by clicking the play button next to any test</li>
+<li><strong>Debug tests</strong> by clicking the debug button next to any test</li>
+</ol>
+<h3 id="test-organizationtest-view" class="tsd-anchor-link">Test Organization/Test View<a href="#test-organizationtest-view" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The extension automatically organizes your tests in the Test Explorer with multiple organization strategies:</p>
+<h4 id="default-feature-based-hierarchical-organization" class="tsd-anchor-link">Default: Feature-Based (Hierarchical) Organization<a href="#default-feature-based-hierarchical-organization" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><p>The extension uses <strong>Feature-Based (Hierarchical) Organization</strong> as the default strategy:</p>
+<ul>
+<li><strong>Feature Files</strong>: Top-level containers for your feature files</li>
+<li><strong>Scenarios</strong>: Nested as children under their respective feature files</li>
+<li><strong>Scenario Outlines</strong>: Special groups for scenario outlines with their examples</li>
+<li><strong>Individual Scenarios</strong>: Regular scenarios and scenario outline examples</li>
+</ul>
+<blockquote>
+<p><strong>Note</strong>: The default organization strategy is set in the extension code and cannot be changed via configuration. You can switch between strategies using the context menu in the Test Explorer.</p>
+</blockquote>
+<h6 id="switching-views" class="tsd-anchor-link">Switching views<a href="#switching-views" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h6><p><img src="media/views.gif" alt="switching views via test explorer"></p>
+<h4 id="alternative-organization-strategies" class="tsd-anchor-link">Alternative Organization Strategies<a href="#alternative-organization-strategies" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><ul>
+<li><strong>Tag-Based Organization</strong>: Groups scenarios by their tags (e.g., <code>@smoke</code>, <code>@regression</code>)</li>
+<li><strong>File-Based Organization</strong>: Groups scenarios by their file paths</li>
+<li><strong>Scenario Type Organization</strong>: Groups by scenario type (regular vs outline)</li>
+<li><strong>Flat Organization</strong>: All scenarios at the same level</li>
+</ul>
+<p><strong>Switch Organization</strong>: Right-click in the Test Explorer → &quot;Organization Strategy&quot; → Choose your preferred organization strategy</p>
+<p>The extension provides enhanced support for scenario outlines:</p>
+<ul>
+<li><strong>Clean Example Names</strong>: Examples are named as &quot;1:&quot;, &quot;2:&quot;, &quot;3:&quot; instead of &quot;Example 1&quot;, &quot;Example 2&quot;</li>
+<li><strong>Long Column Name Handling</strong>: Column names longer than 15 characters are truncated for readability</li>
+<li><strong>Multiple Outlines</strong>: Support for multiple scenario outlines in the same feature file</li>
+<li><strong>Sorted Examples</strong>: Examples are automatically sorted by their number</li>
+<li><strong>Organized Hierarchy</strong>: Scenario outline examples are grouped under their parent outline</li>
+</ul>
+<h4 id="extended-support-for-scenario-outline" class="tsd-anchor-link">Extended support for scenario outline<a href="#extended-support-for-scenario-outline" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><ul>
+<li>Execute test from scenario outline level or example
+<img src="media/running_example.gif" alt="executing a scenario outline example"></li>
+<li>Hierachichal view of scenario outline examples for easy navigation
+<img src="/images/multi_scenario_outline_explorer.png" alt="hierachichal view of scenario outline example"></li>
+</ul>
+<h3 id="codelens-features" class="tsd-anchor-link">CodeLens Features<a href="#codelens-features" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>When you open a <code>.feature</code> file, you'll see inline buttons above each scenario:</p>
+<ul>
+<li>▶️ <strong>Run Scenario</strong>: Runs the specific scenario</li>
+<li>🐛 <strong>Debug Scenario</strong>: Debugs the specific scenario</li>
+</ul>
+<h4 id="code-lens-inline-buttons" class="tsd-anchor-link">Code lens inline buttons<a href="#code-lens-inline-buttons" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h4><ul>
+<li>Feature inline buttons [Run Feature File]| Run with &lt;@tags-available&gt; | ...
+<img src="media/running_feature_code_lens.gif" alt="executing a feature"></li>
+<li>Play button on feature level will execute feature and update test explorer on test outcome
+<img src="media/running_feature_gutter.gif" alt="executing a feature from side"></li>
+<li>Play button scenario level will execute an individual scenario
+<img src="media/running_scenario_side.gif" alt="executing a scenario from side"></li>
+</ul>
+<blockquote>
+<p><strong>Note</strong>: Right click on play button will give additional options like debugging test</p>
+</blockquote>
+<h3 id="commands" class="tsd-anchor-link">Commands<a href="#commands" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Behave: Discover Tests</code></td>
+<td>Manually discover and load test files</td>
+</tr>
+<tr>
+<td><code>Behave: Refresh Tests</code></td>
+<td>Refresh and reload all test files</td>
+</tr>
+<tr>
+<td><code>Behave: Run All Tests</code></td>
+<td>Run all tests in the workspace</td>
+</tr>
+<tr>
+<td><code>Behave: Run All Tests in Parallel</code></td>
+<td>Run all tests in parallel for faster execution</td>
+</tr>
+<tr>
+<td><code>Behave: Run Scenario</code></td>
+<td>Run a specific scenario (used by CodeLens)</td>
+</tr>
+<tr>
+<td><code>Behave: Debug Scenario</code></td>
+<td>Debug a specific scenario (used by CodeLens)</td>
+</tr>
+<tr>
+<td><code>Behave: Run Feature File</code></td>
+<td>Run an entire feature file</td>
+</tr>
+<tr>
+<td><code>Behave: Run Feature File with Tags</code></td>
+<td>Run a feature file with specific tags</td>
+</tr>
+</tbody>
+</table>
+<h2 id="configuration" class="tsd-anchor-link">Configuration<a href="#configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="extension-settings" class="tsd-anchor-link">Extension Settings<a href="#extension-settings" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>behaveTestRunner.behaveCommand</code></td>
+<td><code>&quot;behave&quot;</code></td>
+<td>Command to run Behave tests (auto-detects Python if needed)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.workingDirectory</code></td>
+<td><code>&quot;&quot;</code></td>
+<td>Working directory for test execution (empty = workspace root)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.autoDiscoverTests</code></td>
+<td><code>true</code></td>
+<td>Automatically discover tests on startup</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.testFilePattern</code></td>
+<td><code>&quot;**/*.feature&quot;</code></td>
+<td>Glob pattern for test file discovery</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.enableCodeLens</code></td>
+<td><code>true</code></td>
+<td>Enable CodeLens buttons on feature files (disable if conflicting with other extensions)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.enableTestExplorer</code></td>
+<td><code>true</code></td>
+<td>Enable Test Explorer integration (disable if conflicting with other test explorers)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.priority</code></td>
+<td><code>&quot;normal&quot;</code></td>
+<td>Extension priority for handling feature files (use 'low' if other extensions should take precedence)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.parallelExecution</code></td>
+<td><code>false</code></td>
+<td>Enable parallel execution of feature files</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.maxParallelProcesses</code></td>
+<td><code>4</code></td>
+<td>Maximum number of parallel processes for test execution</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.outputFormat</code></td>
+<td><code>&quot;pretty&quot;</code></td>
+<td>Output format for behave test results (pretty, plain, json, junit, progress, steps)</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.tags</code></td>
+<td><code>&quot;&quot;</code></td>
+<td>Default tags to filter tests (e.g., '@smoke,@regression')</td>
+</tr>
+<tr>
+<td><code>behaveTestRunner.dryRun</code></td>
+<td><code>false</code></td>
+<td>Enable dry run mode to see what tests would be executed without running them</td>
+</tr>
+</tbody>
+</table>
+<h3 id="intelligent-command-detection" class="tsd-anchor-link">Intelligent Command Detection<a href="#intelligent-command-detection" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The extension automatically detects the correct Python command for your system:</p>
+<ul>
+<li><strong>macOS/Linux</strong>: Tries <code>python3</code>, <code>python</code>, then <code>py</code></li>
+<li><strong>Windows</strong>: Tries <code>py</code>, <code>python</code>, then <code>python3</code></li>
+<li><strong>Fallback</strong>: Uses <code>python3 -m behave</code> if direct <code>behave</code> command is not available</li>
+</ul>
+<p>You can override this by setting a specific command in your configuration.</p>
+<h3 id="example-configuration" class="tsd-anchor-link">Example Configuration<a href="#example-configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="json"><span class="hl-1">{</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.behaveCommand&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;python3 -m behave&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.workingDirectory&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;${workspaceFolder}/tests&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.autoDiscoverTests&quot;</span><span class="hl-1">: </span><span class="hl-4">true</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.testFilePattern&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;**/features/**/*.feature&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.enableCodeLens&quot;</span><span class="hl-1">: </span><span class="hl-4">true</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.enableTestExplorer&quot;</span><span class="hl-1">: </span><span class="hl-4">true</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.priority&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;normal&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.parallelExecution&quot;</span><span class="hl-1">: </span><span class="hl-4">false</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.maxParallelProcesses&quot;</span><span class="hl-1">: </span><span class="hl-5">4</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.outputFormat&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;pretty&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.tags&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;@smoke,@regression&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.dryRun&quot;</span><span class="hl-1">: </span><span class="hl-4">false</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="example-feature-files" class="tsd-anchor-link">Example Feature Files<a href="#example-feature-files" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p><strong>Basic Scenario Outline:</strong></p>
+<pre><code class="gherkin"><span class="hl-6">@feature</span><span class="hl-1"> </span><span class="hl-6">@login</span><br/><span class="hl-4">Feature</span><span class="hl-1">:</span><span class="hl-2"> User Login</span><br/><br/><span class="hl-1">  </span><span class="hl-6">@smoke</span><span class="hl-1"> </span><span class="hl-6">@critical</span><br/><span class="hl-1">  </span><span class="hl-4">Scenario Outline</span><span class="hl-1">:</span><span class="hl-2"> Login with different credentials</span><br/><span class="hl-1">    </span><span class="hl-4">Given </span><span class="hl-1">I am on the login page</span><br/><span class="hl-1">    </span><span class="hl-4">When </span><span class="hl-1">I enter username </span><span class="hl-2">&quot;&lt;username&gt;&quot;</span><span class="hl-1"> and password </span><span class="hl-2">&quot;&lt;password&gt;&quot;</span><br/><span class="hl-1">    </span><span class="hl-4">And </span><span class="hl-1">I click the login button</span><br/><span class="hl-1">    </span><span class="hl-4">Then </span><span class="hl-1">I should see </span><span class="hl-2">&quot;&lt;expected_result&gt;&quot;</span><br/><br/><span class="hl-1">    </span><span class="hl-4">Examples</span><span class="hl-1">:</span><br/><span class="hl-7">      | username | password | expected_result |</span><br/><span class="hl-7">      | admin    | admin123 | dashboard       |</span><br/><span class="hl-7">      | user     | user123  | dashboard       |</span><br/><span class="hl-7">      | invalid  | wrong    | error message   |</span>
+</code><button type="button">Copy</button></pre>
+
+<p><strong>Multiple Scenario Outlines:</strong></p>
+<pre><code class="gherkin"><span class="hl-6">@feature</span><span class="hl-1"> </span><span class="hl-6">@api</span><br/><span class="hl-4">Feature</span><span class="hl-1">:</span><span class="hl-2"> API Testing</span><br/><br/><span class="hl-1">  </span><span class="hl-6">@api</span><span class="hl-1"> </span><span class="hl-6">@validation</span><br/><span class="hl-1">  </span><span class="hl-4">Scenario Outline</span><span class="hl-1">:</span><span class="hl-2"> Data validation with various inputs</span><br/><span class="hl-1">    </span><span class="hl-4">Given </span><span class="hl-1">I have a valid API endpoint</span><br/><span class="hl-1">    </span><span class="hl-4">When </span><span class="hl-1">I send </span><span class="hl-2">&quot;&lt;data_type&gt;&quot;</span><span class="hl-1"> data with value </span><span class="hl-2">&quot;&lt;input_value&gt;&quot;</span><br/><span class="hl-1">    </span><span class="hl-4">Then </span><span class="hl-1">the response should contain </span><span class="hl-2">&quot;&lt;validation_result&gt;&quot;</span><br/><br/><span class="hl-1">    </span><span class="hl-4">Examples</span><span class="hl-1">:</span><br/><span class="hl-7">      | data_type | input_value | validation_result |</span><br/><span class="hl-7">      | string    | hello       | valid             |</span><br/><span class="hl-7">      | number    | 42          | valid             |</span><br/><span class="hl-7">      | email     | test@test   | invalid           |</span><br/><br/><span class="hl-1">  </span><span class="hl-6">@performance</span><span class="hl-1"> </span><span class="hl-6">@load</span><br/><span class="hl-1">  </span><span class="hl-4">Scenario Outline</span><span class="hl-1">:</span><span class="hl-2"> Load testing with different user loads</span><br/><span class="hl-1">    </span><span class="hl-4">Given </span><span class="hl-1">I have configured the load testing environment</span><br/><span class="hl-1">    </span><span class="hl-4">When </span><span class="hl-1">I simulate </span><span class="hl-2">&quot;&lt;concurrent_users&gt;&quot;</span><span class="hl-1"> concurrent users</span><br/><span class="hl-1">    </span><span class="hl-4">Then </span><span class="hl-1">the system should handle the load successfully</span><br/><br/><span class="hl-1">    </span><span class="hl-4">Examples</span><span class="hl-1">:</span><br/><span class="hl-7">      | concurrent_users |</span><br/><span class="hl-7">      | 10               |</span><br/><span class="hl-7">      | 50               |</span><br/><span class="hl-7">      | 100              |</span>
+</code><button type="button">Copy</button></pre>
+
+<p>In the Test Explorer, these will appear as:</p>
+<p><strong>Feature-Based (Hierarchical) Organization (Default):</strong></p>
+<ul>
+<li><strong>Feature: User Login</strong>
+<ul>
+<li><strong>Scenario Outline: Login with different credentials</strong>
+<ul>
+<li><strong>1: Login with different credentials - username: admin, password: admin123, expected_result: dashboard</strong></li>
+<li><strong>2: Login with different credentials - username: user, password: user123, expected_result: dashboard</strong></li>
+<li><strong>3: Login with different credentials - username: invalid, password: wrong, expected_result: error message</strong></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p><strong>Tag-Based Organization:</strong></p>
+<ul>
+<li><strong>@smoke</strong> (group)
+<ul>
+<li><strong>1: Login with different credentials - username: admin, password: admin123, expected_result: dashboard</strong></li>
+<li><strong>2: Login with different credentials - username: user, password: user123, expected_result: dashboard</strong></li>
+</ul>
+</li>
+</ul>
+<h2 id="extension-compatibility" class="tsd-anchor-link">Extension Compatibility<a href="#extension-compatibility" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>This extension is designed to work alongside other VS Code Gherkin extensions.</p>
+<h3 id="recommended-configuration-with-cucumber-gherkin-full-support" class="tsd-anchor-link">Recommended Configuration with Cucumber (Gherkin) Full Support<a href="#recommended-configuration-with-cucumber-gherkin-full-support" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p><strong>Note</strong>: This extension is developed and tested with Cucumber (Gherkin) Full Support extension. Since you're using Cucumber (Gherkin) Full Support for syntax highlighting and autocomplete, this extension focuses on test execution and discovery. The extensions complement each other perfectly:</p>
+<pre><code class="json"><span class="hl-1">{</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.enableCodeLens&quot;</span><span class="hl-1">: </span><span class="hl-4">true</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.enableTestExplorer&quot;</span><span class="hl-1">: </span><span class="hl-4">true</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.priority&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;low&quot;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-3">&quot;behaveTestRunner.defaultOrganizationStrategy&quot;</span><span class="hl-1">: </span><span class="hl-2">&quot;FeatureBasedOrganization&quot;</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<p><strong>Why this works well:</strong></p>
+<ul>
+<li><strong>Cucumber Extension</strong>: Handles syntax highlighting, autocomplete, and Gherkin language support</li>
+<li><strong>Behave Test Runner</strong>: Handles test discovery, execution, and Test Explorer integration</li>
+<li><strong>No Conflicts</strong>: Each extension has its own domain of responsibility</li>
+</ul>
+<h3 id="extension-priority" class="tsd-anchor-link">Extension Priority<a href="#extension-priority" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The <code>priority</code> setting determines which extension takes precedence when multiple extensions can handle the same file type:</p>
+<ul>
+<li><strong><code>&quot;low&quot;</code></strong>: Let other extensions handle <code>.feature</code> files first</li>
+<li><strong><code>&quot;normal&quot;</code></strong>: Standard priority</li>
+<li><strong><code>&quot;high&quot;</code></strong>: Take precedence over other extensions</li>
+</ul>
+<h2 id="project-structure" class="tsd-anchor-link">Project Structure<a href="#project-structure" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><pre><code><span class="hl-8">src</span><span class="hl-1">/</span><br/><span class="hl-1">├── </span><span class="hl-8">core</span><span class="hl-1">/                   # </span><span class="hl-8">Core</span><span class="hl-1"> </span><span class="hl-8">functionality</span><br/><span class="hl-1">│   └── </span><span class="hl-8">test</span><span class="hl-1">-</span><span class="hl-8">executor</span><span class="hl-1">.</span><span class="hl-8">ts</span><span class="hl-1">    # </span><span class="hl-8">Test</span><span class="hl-1"> </span><span class="hl-8">execution</span><span class="hl-1"> </span><span class="hl-8">logic</span><br/><span class="hl-1">├── </span><span class="hl-8">parsers</span><span class="hl-1">/                # </span><span class="hl-8">File</span><span class="hl-1"> </span><span class="hl-8">parsing</span><br/><span class="hl-1">│   └── </span><span class="hl-8">feature</span><span class="hl-1">-</span><span class="hl-8">parser</span><span class="hl-1">.</span><span class="hl-8">ts</span><span class="hl-1">   # </span><span class="hl-8">Gherkin</span><span class="hl-1"> </span><span class="hl-8">feature</span><span class="hl-1"> </span><span class="hl-8">file</span><span class="hl-1"> </span><span class="hl-8">parser</span><br/><span class="hl-1">├── </span><span class="hl-8">test</span><span class="hl-1">-</span><span class="hl-8">providers</span><span class="hl-1">/         # </span><span class="hl-9">VS</span><span class="hl-1"> </span><span class="hl-8">Code</span><span class="hl-1"> </span><span class="hl-8">test</span><span class="hl-1"> </span><span class="hl-8">integration</span><br/><span class="hl-1">│   └── </span><span class="hl-8">behave</span><span class="hl-1">-</span><span class="hl-8">test</span><span class="hl-1">-</span><span class="hl-8">provider</span><span class="hl-1">.</span><span class="hl-8">ts</span><br/><span class="hl-1">├── </span><span class="hl-8">commands</span><span class="hl-1">/               # </span><span class="hl-9">VS</span><span class="hl-1"> </span><span class="hl-8">Code</span><span class="hl-1"> </span><span class="hl-8">commands</span><br/><span class="hl-1">│   └── </span><span class="hl-8">command</span><span class="hl-1">-</span><span class="hl-8">manager</span><span class="hl-1">.</span><span class="hl-8">ts</span><span class="hl-1">  # </span><span class="hl-8">Command</span><span class="hl-1"> </span><span class="hl-8">registration</span><span class="hl-1"> </span><span class="hl-8">and</span><span class="hl-1"> </span><span class="hl-8">handling</span><br/><span class="hl-1">├── </span><span class="hl-8">utils</span><span class="hl-1">/                  # </span><span class="hl-8">Utilities</span><br/><span class="hl-1">│   └── </span><span class="hl-8">logger</span><span class="hl-1">.</span><span class="hl-8">ts</span><span class="hl-1">           # </span><span class="hl-8">Logging</span><span class="hl-1"> </span><span class="hl-8">utility</span><br/><span class="hl-1">├── </span><span class="hl-8">types</span><span class="hl-1">/                  # </span><span class="hl-8">TypeScript</span><span class="hl-1"> </span><span class="hl-4">type</span><span class="hl-1"> </span><span class="hl-6">definitions</span><br/><span class="hl-1">│   └── index.ts            # Shared interfaces and types</span><br/><span class="hl-1">└── extension.ts            # Main extension entry point</span>
+</code><button>Copy</button></pre>
+
+<h2 id="development" class="tsd-anchor-link">Development<a href="#development" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="prerequisites-1" class="tsd-anchor-link">Prerequisites<a href="#prerequisites-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ul>
+<li>Node.js 20.x or later</li>
+<li>npm or yarn</li>
+</ul>
+<h3 id="setup" class="tsd-anchor-link">Setup<a href="#setup" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="bash"><span class="hl-10"># Install dependencies</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><br/><span class="hl-10"># Compile TypeScript</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">compile</span><br/><br/><span class="hl-10"># Run tests</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">test</span><br/><br/><span class="hl-10"># Package extension</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">package</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="development-scripts" class="tsd-anchor-link">Development Scripts<a href="#development-scripts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>npm run compile</code></td>
+<td>Compile TypeScript and build extension</td>
+</tr>
+<tr>
+<td><code>npm run watch</code></td>
+<td>Watch for changes and recompile</td>
+</tr>
+<tr>
+<td><code>npm run lint</code></td>
+<td>Run ESLint</td>
+</tr>
+<tr>
+<td><code>npm run lint:fix</code></td>
+<td>Fix ESLint issues</td>
+</tr>
+<tr>
+<td><code>npm test</code></td>
+<td>Run all tests</td>
+</tr>
+<tr>
+<td><code>npm run package</code></td>
+<td>Create VSIX package</td>
+</tr>
+<tr>
+<td><code>npm run package:vsix</code></td>
+<td>Create VSIX package with version</td>
+</tr>
+<tr>
+<td><code>npm run dev</code></td>
+<td>Start development mode</td>
+</tr>
+<tr>
+<td><code>npm run test:unit</code></td>
+<td>Run unit tests only</td>
+</tr>
+<tr>
+<td><code>npm run test:integration</code></td>
+<td>Run integration tests only</td>
+</tr>
+<tr>
+<td><code>npm run test:parser</code></td>
+<td>Run parser tests only</td>
+</tr>
+<tr>
+<td><code>npm run test:execution</code></td>
+<td>Run execution tests only</td>
+</tr>
+</tbody>
+</table>
+<h3 id="testing" class="tsd-anchor-link">Testing<a href="#testing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The extension includes comprehensive tests:</p>
+<ul>
+<li><strong>Unit Tests</strong>: Test individual components</li>
+<li><strong>Integration Tests</strong>: Test VS Code integration</li>
+<li><strong>Parser Tests</strong>: Test Gherkin parsing</li>
+<li><strong>Execution Tests</strong>: Test test execution</li>
+</ul>
+<p><strong>Current Test Status</strong>: 111 tests passing, 1 failing (33 lint warnings in source files only)</p>
+<p>Run tests with:</p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">test</span><span class="hl-1">                   </span><span class="hl-10"># Run all tests</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:unit</span><span class="hl-1">          </span><span class="hl-10"># Run unit tests only</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:integration</span><span class="hl-1">   </span><span class="hl-10"># Run integration tests only</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:parser</span><span class="hl-1">        </span><span class="hl-10"># Run parser tests only</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:execution</span><span class="hl-1">     </span><span class="hl-10"># Run execution tests only</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="contributing" class="tsd-anchor-link">Contributing<a href="#contributing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ol>
+<li>Fork the repository</li>
+<li>Create a feature branch (<code>git checkout -b feature/amazing-feature</code>)</li>
+<li>Commit your changes (<code>git commit -m 'Add amazing feature'</code>)</li>
+<li>Push to the branch (<code>git push origin feature/amazing-feature</code>)</li>
+<li>Open a Pull Request</li>
+</ol>
+<h3 id="code-style" class="tsd-anchor-link">Code Style<a href="#code-style" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ul>
+<li>Follow TypeScript best practices</li>
+<li>Use ESLint for code linting</li>
+<li>Write comprehensive tests</li>
+<li>Follow conventional commit messages</li>
+</ul>
+<h2 id="troubleshooting" class="tsd-anchor-link">Troubleshooting<a href="#troubleshooting" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="common-issues" class="tsd-anchor-link">Common Issues<a href="#common-issues" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p><strong>Tests not discovered:</strong></p>
+<ul>
+<li>Ensure <code>.feature</code> files exist in your workspace</li>
+<li>Check the <code>testFilePattern</code> setting</li>
+<li>Try running &quot;Behave: Discover Tests&quot; manually</li>
+</ul>
+<p><strong>Tests not running:</strong></p>
+<ul>
+<li>Verify Behave is installed (<code>behave --version</code>)</li>
+<li>Check the <code>behaveCommand</code> setting</li>
+<li>Ensure the working directory is correct</li>
+</ul>
+<p><strong>Debug not working:</strong></p>
+<ul>
+<li>Make sure Python debugger is configured</li>
+<li>Check that the Python extension is installed</li>
+<li>Verify the debug configuration</li>
+</ul>
+<h3 id="logs" class="tsd-anchor-link">Logs<a href="#logs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Enable detailed logging by opening the Output panel (View → Output) and selecting &quot;Behave Test Runner&quot; from the dropdown.</p>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>This project is licensed under the MIT License - see the <a href="media/LICENSE">LICENSE</a> file for details.</p>
+<h2 id="changelog" class="tsd-anchor-link">Changelog<a href="#changelog" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>See <a href="media/CHANGELOG.md">CHANGELOG.md</a> for a list of changes and version history.</p>
+<h2 id="support" class="tsd-anchor-link">Support<a href="#support" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p><b>&quot;Code, coffee, repeat. Support the cycle!</b> : If you enjoy using <b>Behave Test Runner</b>, consider contributing to fuel my coding dreams!</p>
+<p><a href="https://buymeacoffee.com/upscaled.dev" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a></p>
+<h2 id="acknowledgments" class="tsd-anchor-link">Acknowledgments<a href="#acknowledgments" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li><a href="https://behave.readthedocs.io/">Behave</a> - Python BDD framework</li>
+<li><a href="https://code.visualstudio.com/api">VS Code Extension API</a> - Extension development framework</li>
+<li><a href="https://cucumber.io/docs/gherkin/">Gherkin</a> - BDD syntax specification</li>
+<li><a href="https://marketplace.visualstudio.com/items?itemName=alexkrechik.cucumberautocomplete">Cucumber (Gherkin) Full Support</a> - VS Code extension for Gherkin syntax highlighting and autocomplete</li>
+<li><a href="https://www.freepik.com/">Freepik</a> - Extension icon design</li>
+</ul>
+</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#behave-test-runner"><span>Behave <wbr/>Test <wbr/>Runner</span></a><ul><li><a href="#features"><span>Features</span></a></li><li><a href="#installation"><span>Installation</span></a></li><li><ul><li><a href="#from-vsix"><span>From <wbr/>VSIX</span></a></li><li><a href="#from-source"><span>From <wbr/>Source</span></a></li></ul></li><li><a href="#usage"><span>Usage</span></a></li><li><ul><li><a href="#prerequisites"><span>Prerequisites</span></a></li><li><a href="#basic-usage"><span>Basic <wbr/>Usage</span></a></li><li><a href="#test-organizationtest-view"><span>Test <wbr/>Organization/<wbr/>Test <wbr/>View</span></a></li><li><ul><li><a href="#default-feature-based-hierarchical-organization"><span>Default: <wbr/>Feature-<wbr/>Based (<wbr/>Hierarchical) <wbr/>Organization</span></a></li><li><ul><li><ul><li><a href="#switching-views"><span>Switching views</span></a></li></ul></li></ul></li><li><a href="#alternative-organization-strategies"><span>Alternative <wbr/>Organization <wbr/>Strategies</span></a></li><li><a href="#extended-support-for-scenario-outline"><span>Extended support for scenario outline</span></a></li></ul></li><li><a href="#codelens-features"><span>Code<wbr/>Lens <wbr/>Features</span></a></li><li><ul><li><a href="#code-lens-inline-buttons"><span>Code lens inline buttons</span></a></li></ul></li><li><a href="#commands"><span>Commands</span></a></li></ul></li><li><a href="#configuration"><span>Configuration</span></a></li><li><ul><li><a href="#extension-settings"><span>Extension <wbr/>Settings</span></a></li><li><a href="#intelligent-command-detection"><span>Intelligent <wbr/>Command <wbr/>Detection</span></a></li><li><a href="#example-configuration"><span>Example <wbr/>Configuration</span></a></li><li><a href="#example-feature-files"><span>Example <wbr/>Feature <wbr/>Files</span></a></li></ul></li><li><a href="#extension-compatibility"><span>Extension <wbr/>Compatibility</span></a></li><li><ul><li><a href="#recommended-configuration-with-cucumber-gherkin-full-support"><span>Recommended <wbr/>Configuration with <wbr/>Cucumber (<wbr/>Gherkin) <wbr/>Full <wbr/>Support</span></a></li><li><a href="#extension-priority"><span>Extension <wbr/>Priority</span></a></li></ul></li><li><a href="#project-structure"><span>Project <wbr/>Structure</span></a></li><li><a href="#development"><span>Development</span></a></li><li><ul><li><a href="#prerequisites-1"><span>Prerequisites</span></a></li><li><a href="#setup"><span>Setup</span></a></li><li><a href="#development-scripts"><span>Development <wbr/>Scripts</span></a></li><li><a href="#testing"><span>Testing</span></a></li></ul></li><li><a href="#contributing"><span>Contributing</span></a></li><li><ul><li><a href="#code-style"><span>Code <wbr/>Style</span></a></li></ul></li><li><a href="#troubleshooting"><span>Troubleshooting</span></a></li><li><ul><li><a href="#common-issues"><span>Common <wbr/>Issues</span></a></li><li><a href="#logs"><span>Logs</span></a></li></ul></li><li><a href="#license"><span>License</span></a></li><li><a href="#changelog"><span>Changelog</span></a></li><li><a href="#support"><span>Support</span></a></li><li><a href="#acknowledgments"><span>Acknowledgments</span></a></li></ul></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="modules.html">Behave Test Runner Extension - v1.1.7</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer></footer><div class="overlay"></div></body></html>

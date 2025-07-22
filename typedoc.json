@@ -1,0 +1,26 @@
+{
+  "entryPoints": ["src/extension.ts"],
+  "entryPointStrategy": "expand",
+  "out": "docs",
+  "exclude": ["src/**/*.test.ts", "src/**/*.spec.ts", "src/test/**/*"],
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeExternals": true,
+  "includeVersion": true,
+  "theme": "default",
+  "name": "Behave Test Runner Extension",
+  "readme": "README.md",
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Core",
+    "Parsers", 
+    "Test Providers",
+    "Commands",
+    "Types",
+    "Utils",
+    "*"
+  ],
+  "hideGenerator": true,
+  "sort": ["source-order"],
+  "highlightLanguages": ["gherkin", "typescript", "ts", "javascript", "js", "json", "bash", "shell", "python", "py"]
+} 

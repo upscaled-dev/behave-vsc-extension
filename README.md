@@ -12,7 +12,7 @@ A VS Code extension for discovering, running, and debugging [Behave](https://beh
 - 🏷️ **Tag-based Organization**: Automatically groups scenarios by tags for better organization
 - 📋 **Scenario Outline Support**: Full support for scenario outlines with individual example tracking
 - 🔢 **Smart Example Naming**: Clean, numbered examples (1:, 2:, 3:) instead of verbose names
-- 📏 **Long Column Handling**: Intelligently truncates long table column names for readability
+- 📏 **Long Column Names Handling**: Intelligently truncates long table column names for readability
 - ⚙️ **Configurable**: Customize behave command, working directory, and more
 - 🔄 **Auto-refresh**: Automatically updates when feature files change
 - 🚀 **Parallel Execution**: Run tests in parallel for faster execution
@@ -52,7 +52,7 @@ npm run package
 4. **Run tests** by clicking the play button next to any test
 5. **Debug tests** by clicking the debug button next to any test
 
-### Test Organization
+### Test Organization/Test View
 
 The extension automatically organizes your tests in the Test Explorer with multiple organization strategies:
 
@@ -67,6 +67,9 @@ The extension uses **Feature-Based (Hierarchical) Organization** as the default 
 
 > **Note**: The default organization strategy is set in the extension code and cannot be changed via configuration. You can switch between strategies using the context menu in the Test Explorer.
 
+###### Switching views
+![switching views via test explorer](images/views.gif)
+
 #### Alternative Organization Strategies
 
 - **Tag-Based Organization**: Groups scenarios by their tags (e.g., `@smoke`, `@regression`)
@@ -74,17 +77,21 @@ The extension uses **Feature-Based (Hierarchical) Organization** as the default 
 - **Scenario Type Organization**: Groups by scenario type (regular vs outline)
 - **Flat Organization**: All scenarios at the same level
 
-**Switch Organization**: Right-click in the Test Explorer → "Behave Test Runner" → Choose your preferred organization strategy
-
-### Scenario Outline Support
+**Switch Organization**: Right-click in the Test Explorer → "Organization Strategy" → Choose your preferred organization strategy
 
 The extension provides enhanced support for scenario outlines:
 
 - **Clean Example Names**: Examples are named as "1:", "2:", "3:" instead of "Example 1", "Example 2"
-- **Long Column Handling**: Column names longer than 15 characters are truncated for readability
+- **Long Column Name Handling**: Column names longer than 15 characters are truncated for readability
 - **Multiple Outlines**: Support for multiple scenario outlines in the same feature file
 - **Sorted Examples**: Examples are automatically sorted by their number
 - **Organized Hierarchy**: Scenario outline examples are grouped under their parent outline
+
+#### Extended support for scenario outline
+- Execute test from scenario outline level or example
+![executing a scenario outline example](images/running_example.gif)
+- Hierachichal view of scenario outline examples for easy navigation
+![hierachichal view of scenario outline example](/images/multi_scenario_outline_explorer.png)
 
 ### CodeLens Features
 
@@ -92,6 +99,16 @@ When you open a `.feature` file, you'll see inline buttons above each scenario:
 
 - ▶️ **Run Scenario**: Runs the specific scenario
 - 🐛 **Debug Scenario**: Debugs the specific scenario
+
+#### Code lens inline buttons
+- Feature inline buttons [Run Feature File]| Run with <@tags-available> | ...
+![executing a feature](images/running_feature_code_lens.gif)
+- Play button on feature level will execute feature and update test explorer on test outcome
+![executing a feature from side](images/running_feature_gutter.gif)
+- Play button scenario level will execute an individual scenario 
+![executing a scenario from side](images/running_scenario_side.gif)
+
+> **Note**: Right click on play button will give additional options like debugging test
 
 ### Commands
 
@@ -225,7 +242,7 @@ In the Test Explorer, these will appear as:
 
 ## Extension Compatibility
 
-This extension is designed to work alongside other VS Code extensions. Here are recommended configurations for different setups:
+This extension is designed to work alongside other VS Code Gherkin extensions. 
 
 ### Recommended Configuration with Cucumber (Gherkin) Full Support
 
@@ -233,7 +250,7 @@ This extension is designed to work alongside other VS Code extensions. Here are 
 
 ```json
 {
-  "behaveTestRunner.enableCodeLens": false,
+  "behaveTestRunner.enableCodeLens": true,
   "behaveTestRunner.enableTestExplorer": true,
   "behaveTestRunner.priority": "low",
   "behaveTestRunner.defaultOrganizationStrategy": "FeatureBasedOrganization"
@@ -245,28 +262,6 @@ This extension is designed to work alongside other VS Code extensions. Here are 
 - **Cucumber Extension**: Handles syntax highlighting, autocomplete, and Gherkin language support
 - **Behave Test Runner**: Handles test discovery, execution, and Test Explorer integration
 - **No Conflicts**: Each extension has its own domain of responsibility
-
-### Other Extension Combinations
-
-**With Python Test Explorer:**
-
-```json
-{
-  "behaveTestRunner.enableCodeLens": true,
-  "behaveTestRunner.enableTestExplorer": false,
-  "behaveTestRunner.priority": "normal"
-}
-```
-
-**Standalone Usage:**
-
-```json
-{
-  "behaveTestRunner.enableCodeLens": true,
-  "behaveTestRunner.enableTestExplorer": true,
-  "behaveTestRunner.priority": "normal"
-}
-```
 
 ### Extension Priority
 
@@ -280,7 +275,7 @@ The `priority` setting determines which extension takes precedence when multiple
 
 ```
 src/
-├── core/                    # Core functionality
+├── core/                   # Core functionality
 │   └── test-executor.ts    # Test execution logic
 ├── parsers/                # File parsing
 │   └── feature-parser.ts   # Gherkin feature file parser
@@ -289,10 +284,10 @@ src/
 ├── commands/               # VS Code commands
 │   └── command-manager.ts  # Command registration and handling
 ├── utils/                  # Utilities
-│   └── logger.ts          # Logging utility
+│   └── logger.ts           # Logging utility
 ├── types/                  # TypeScript type definitions
-│   └── index.ts           # Shared interfaces and types
-└── extension.ts           # Main extension entry point
+│   └── index.ts            # Shared interfaces and types
+└── extension.ts            # Main extension entry point
 ```
 
 ## Development
@@ -349,7 +344,7 @@ The extension includes comprehensive tests:
 Run tests with:
 
 ```bash
-npm test                    # Run all tests
+npm test                   # Run all tests
 npm run test:unit          # Run unit tests only
 npm run test:integration   # Run integration tests only
 npm run test:parser        # Run parser tests only
@@ -405,29 +400,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 See [CHANGELOG.md](CHANGELOG.md) for a list of changes and version history.
 
-### Latest Improvements (v1.0.0)
-
-- 🏗️ **New Default Organization**: Feature-Based (Hierarchical) organization is now the default strategy
-- 📁 **Hierarchical Structure**: Feature files as root items with scenarios nested as children
-- 🔄 **Multiple Organization Strategies**: Easy switching between 5 different organization strategies
-- ✨ **Enhanced Scenario Outline Support**: Improved handling of scenario outlines with clean, numbered examples
-- 🔢 **Smart Example Naming**: Examples now show as "1:", "2:", "3:" instead of verbose "Example 1", "Example 2" names
-- 📏 **Long Column Handling**: Column names longer than 15 characters are intelligently truncated for better readability
-- 🏷️ **Tag-based Organization**: Automatic grouping of scenarios by their tags in the Test Explorer
-- 📋 **Multiple Outline Support**: Full support for multiple scenario outlines in the same feature file
-- 🔄 **Sorted Examples**: Scenario outline examples are automatically sorted by their number
-- 🚀 **Parallel Execution**: Added support for running tests in parallel for faster execution
-- 📊 **Improved Hierarchy**: Better organization of tests in the Test Explorer with clear parent-child relationships
-- 🧹 **Code Quality**: Fixed all lint errors and improved code maintainability
-- 🔧 **TypeScript Compliance**: Resolved all TypeScript compilation issues
-- 🧪 **Test Suite Stability**: 111 tests passing with comprehensive coverage (1 minor test failure due to async improvements)
-- 🚀 **Stable Release**: Enhanced features and bug fixes with improved user experience
-
 ## Support
 
-- 📖 [Documentation](https://github.com/your-username/behave-test-runner/wiki)
-- 🐛 [Issue Tracker](https://github.com/your-username/behave-test-runner/issues)
-- 💬 [Discussions](https://github.com/your-username/behave-test-runner/discussions)
+<b>"Code, coffee, repeat. Support the cycle!</b> : If you enjoy using <b>Behave Test Runner</b>, consider contributing to fuel my coding dreams!
+
+<a href="https://buymeacoffee.com/upscaled.dev" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+
 
 ## Acknowledgments
 
