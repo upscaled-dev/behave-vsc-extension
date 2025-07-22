@@ -2,7 +2,7 @@
   "name": "behave-test-runner",
   "displayName": "Behave Test Runner",
   "description": "VS Code extension for Behave test discovery and running",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "icon": "icon.png",
   "publisher": "upscaled-dev",
   "license": "MIT",
@@ -367,6 +367,9 @@
     "release:major": "standard-version --release-as major",
     "package:vsix": "npm run package && vsce package --no-yarn --out dist/behave-test-runner-$(node -p \"require('./package.json').version\").vsix",
     "release:vsix": "npm run release && npm run package:vsix",
+    "docs": "typedoc --out docs src",
+    "docs:watch": "typedoc --out docs --watch src",
+    "docs:serve": "typedoc --out docs --serve src",
     "prepare": "husky install"
   },
   "devDependencies": {
@@ -390,6 +393,7 @@
     "rimraf": "^5.0.10",
     "standard-version": "^9.5.0",
     "typedoc": "^0.28.7",
+    "typedoc-plugin-markdown": "^4.7.1",
     "typescript": "^5.8.3"
   },
   "config": {

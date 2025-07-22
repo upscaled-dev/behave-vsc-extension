@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.1.8](https://github.com/upscaled-dev/behave-vsc-extension/compare/v1.1.0...v1.1.8) (2025-07-22)
+
+
+### Bug Fixes
+
+* linter warnings ([78a52ee](https://github.com/upscaled-dev/behave-vsc-extension/commit/78a52ee1793825aa1f5c612fa82e62270e2daab6))
+* resolve debug command issues for scenario outlines and examples ([33fa925](https://github.com/upscaled-dev/behave-vsc-extension/commit/33fa925cf8a9a668e69e8c9951cddc1351ce863b))
+
 ## 1.1.0 (2025-07-22)
 
 
