@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { ParsedFeature, Scenario } from "../types/index";
+import { Logger } from "../utils/logger";
 
 /**
  * Parser for Gherkin feature files
@@ -17,8 +18,7 @@ export class FeatureParser {
       const content = fs.readFileSync(filePath, "utf-8");
       return this.parseFeatureContent(content);
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error("Error parsing feature file:", error);
+      Logger.getInstance().error("Error parsing feature file:", { error });
       return null;
     }
   }
@@ -47,8 +47,7 @@ export class FeatureParser {
         featureLineNumber: featureInfo.lineNumber,
       };
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error("Error parsing feature content:", error);
+      Logger.getInstance().error("Error parsing feature content:", { error });
       return null;
     }
   }
@@ -133,7 +132,7 @@ export class FeatureParser {
 
         // Validate scenario name
         if (!scenarioName) {
-          console.warn(
+          Logger.getInstance().warn(
             `Warning: Empty scenario name found at line ${lineNumber} in feature file`
           );
         }
@@ -176,7 +175,7 @@ export class FeatureParser {
 
         // Validate scenario outline name
         if (!scenarioName) {
-          console.warn(
+          Logger.getInstance().warn(
             `Warning: Empty scenario outline name found at line ${lineNumber} in feature file`
           );
         }

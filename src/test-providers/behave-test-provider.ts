@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { FeatureParser } from "../parsers/feature-parser";
 import { TestExecutor } from "../core/test-executor";
-import { Scenario, TestOrganizationStrategy } from "../types";
+import { Scenario, TestOrganizationStrategy, TestGroup, ParsedFeature } from "../types";
 import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "../core/extension-config";
 import { TestDiscoveryManager } from "../core/test-discovery-manager";
@@ -238,7 +238,7 @@ export class BehaveTestProvider {
 
       // First pass: collect all scenarios from all feature files
       const allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }> = [];
-      const featureFiles: Array<{ file: vscode.Uri; parsed: any }> = [];
+      const featureFiles: Array<{ file: vscode.Uri; parsed: ParsedFeature | null }> = [];
 
       for (const filePath of filePaths) {
         try {
@@ -1411,7 +1411,7 @@ export class BehaveTestProvider {
    * Create tag-based test hierarchy with tag groups at the root level
    */
   private createTagBasedTestHierarchy(
-    organizedGroups: any[],
+    organizedGroups: TestGroup[],
     allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }>
   ): void {
     Logger.getInstance().info("Creating tag-based test hierarchy", {
@@ -1461,7 +1461,7 @@ export class BehaveTestProvider {
    * Create feature-based test hierarchy (for non-tag organizations)
    */
   private async createFeatureBasedTestHierarchy(
-    organizedGroups: any[],
+    organizedGroups: TestGroup[],
     allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }>
   ): Promise<void> {
     // For non-tag organizations, create the traditional feature-based structure
@@ -1511,7 +1511,7 @@ export class BehaveTestProvider {
    * and scenarios are nested under their respective feature files.
    */
   private async createHierarchicalFeatureBasedTestHierarchy(
-    organizedGroups: any[],
+    organizedGroups: TestGroup[],
     allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }>
   ): Promise<void> {
     Logger.getInstance().info(

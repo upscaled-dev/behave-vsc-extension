@@ -1,0 +1,208 @@
+name: Pre-Merge Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ develop ]
+
+jobs:
+  prerequisites-check:
+    name: Check Prerequisites
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Behave
+      run: |
+        python -m pip install --upgrade pip
+        pip install behave
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Check Node.js version
+      run: |
+        echo "Checking Node.js version..."
+        node --version
+        if [[ ! $(node --version) =~ ^v(20|21|22)\. ]]; then
+          echo "❌ Node.js version must be 20.x, 21.x, or 22.x"
+          exit 1
+        fi
+        echo "✅ Node.js version is compatible"
+        
+    - name: Check Python and Behave
+      run: |
+        echo "Checking Python version..."
+        python --version
+        if [[ ! $(python --version) =~ Python\ (3\.(9|10|11|12)|4\.[0-9]+) ]]; then
+          echo "❌ Python version must be 3.9 or later"
+          exit 1
+        fi
+        echo "✅ Python version is compatible"
+        
+        echo "Checking Behave installation..."
+        behave --version
+        if [[ ! $(behave --version) =~ ^behave\ [0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          echo "❌ Behave is not properly installed"
+          exit 1
+        fi
+        echo "✅ Behave is installed"
+        
+    - name: Check development tools
+      run: |
+        echo "Checking development tools..."
+        npx tsc --version
+        npx eslint --version
+        npx esbuild --version
+        npx @vscode/test-cli --version
+        echo "✅ All development tools are available"
+
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    needs: prerequisites-check
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: TypeScript compilation check
+      run: npm run check-types
+      
+    - name: ESLint check
+      run: npm run lint
+      
+    - name: Test compilation
+      run: npm run compile-tests
+
+  tests:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Behave
+      run: |
+        python -m pip install --upgrade pip
+        pip install behave
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run all tests
+      run: npm test
+      
+    - name: Run unit tests
+      run: npm run test:unit
+      
+    - name: Run integration tests
+      run: npm run test:integration
+
+  build:
+    name: Build Extension
+    runs-on: ubuntu-latest
+    needs: tests
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build extension
+      run: npm run compile
+      
+    - name: Package extension
+      run: npm run package
+      
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: extension-build
+        path: dist/
+        retention-days: 7
+
+  cross-platform-test:
+    name: Cross-Platform Test
+    runs-on: ${{ matrix.os }}
+    needs: build
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [20, 21]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Behave
+      run: |
+        python -m pip install --upgrade pip
+        pip install behave
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run basic tests
+      run: npm run test:fast
+      
+    - name: Check extension compatibility
+      run: |
+        echo "Testing on ${{ matrix.os }} with Node.js ${{ matrix.node-version }}"
+        npm run check-types
+        npm run lint 

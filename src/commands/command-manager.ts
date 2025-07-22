@@ -5,6 +5,26 @@ import { Logger } from "../utils/logger";
 import { CommandArguments, CommandHandler } from "../types";
 import * as fs from "fs";
 
+// Minimal interfaces for type-safe access to test provider and managers
+interface OrganizationStrategy {
+  strategyType: string;
+  getDescription(): string;
+}
+interface OrganizationManagerLike {
+  getAvailableStrategies(): Array<{ name: string; description: string; strategy: OrganizationStrategy }>;
+  getStrategy(): OrganizationStrategy;
+  setStrategy(strategy: OrganizationStrategy): void;
+}
+interface DiscoveryManagerLike {
+  clearCache(): void;
+}
+interface TestProviderLike {
+  organizationManager?: OrganizationManagerLike;
+  discoveryManager?: DiscoveryManagerLike;
+  discoverTests?: () => Promise<void>;
+  forceRefreshTestExplorer?: () => Promise<void>;
+}
+
 /**
  * Command registration and execution options
  */
@@ -25,7 +45,8 @@ export class CommandManager {
   private testExecutor: TestExecutor;
   private config: ExtensionConfig;
   private logger: Logger;
-  private testProvider: any; // Will be set by extension
+  // Change testProvider type to unknown
+  private testProvider: unknown;
 
   /**
    * Map for fast lookup: (filePath, lineNumber, scenarioName) => TestItem
@@ -48,7 +69,7 @@ export class CommandManager {
   /**
    * Set the test provider reference for updating test status
    */
-  public setTestProvider(testProvider: any): void {
+  public setTestProvider(testProvider: unknown): void {
     this.testProvider = testProvider;
   }
 
@@ -67,7 +88,7 @@ export class CommandManager {
 
     try {
       // Get the test controller from the test provider
-      const testController = (this.testProvider as any).testController;
+      const testController = (this.testProvider as { testController: vscode.TestController }).testController;
       if (!testController) {
         this.logger.debug(
           "Test controller not available, skipping status update"
@@ -139,7 +160,7 @@ export class CommandManager {
 
     try {
       // Get the test controller from the test provider
-      const testController = (this.testProvider as any).testController;
+      const testController = (this.testProvider as { testController: vscode.TestController }).testController;
       if (!testController) {
         this.logger.debug(
           "Test controller not available, skipping status update"
@@ -194,22 +215,24 @@ export class CommandManager {
    * Find a test item by line number in a specific file
    */
   private findTestItemByLineNumber(
-    testController: any,
+    testController: vscode.TestController,
     filePath: string,
     lineNumber: number
   ): vscode.TestItem | undefined {
-    const findRecursively = (items: any): vscode.TestItem | undefined => {
-      for (const item of items.values()) {
-        // Check if this item is in the right file and has the right line number
-        if (
-          item.uri?.fsPath === filePath &&
-          item.range?.start.line === lineNumber - 1
-        ) {
-          return item;
-        }
-        const child = findRecursively(item.children);
-        if (child) {
-          return child;
+    const findRecursively = (items: Iterable<[string, vscode.TestItem]> | undefined): vscode.TestItem | undefined => {
+      if (items && typeof (items as Iterable<[string, vscode.TestItem]>)[Symbol.iterator] === 'function') {
+        for (const [, item] of items) {
+          // Check if this item is in the right file and has the right line number
+          if (
+            item.uri?.fsPath === filePath &&
+            item.range?.start.line === lineNumber - 1
+          ) {
+            return item;
+          }
+          const child = findRecursively(item.children);
+          if (child) {
+            return child;
+          }
         }
       }
       return undefined;
@@ -221,16 +244,17 @@ export class CommandManager {
   /**
    * Log available test items for debugging
    */
-  private logAvailableTestItems(testController: any): void {
-    const logItems = (items: any, depth = 0): void => {
-      for (const item of items.values()) {
-        const indent = "  ".repeat(depth);
-        this.logger.debug(
-          `${indent}- ${item.id} (${item.label}) - Range: ${
-            item.range?.start.line + 1
-          }`
-        );
-        logItems(item.children, depth + 1);
+  private logAvailableTestItems(testController: vscode.TestController): void {
+    const logItems = (items: Iterable<[string, vscode.TestItem]> | undefined, depth = 0): void => {
+      if (items && typeof (items as Iterable<[string, vscode.TestItem]>)[Symbol.iterator] === 'function') {
+        for (const [, item] of items) {
+          const indent = "  ".repeat(depth);
+          const lineInfo = item.range?.start.line !== undefined ? (item.range.start.line + 1) : "(unknown)";
+          this.logger.debug(
+            `${indent}- ${item.id} (${item.label}) - Range: ${lineInfo}`
+          );
+          logItems(item.children, depth + 1);
+        }
       }
     };
 
@@ -242,24 +266,26 @@ export class CommandManager {
    * Find test items by tags in a specific file
    */
   private findTestItemsByTags(
-    testController: any,
+    testController: vscode.TestController,
     filePath: string,
     tags: string,
     matchingItems: vscode.TestItem[]
   ): void {
-    const searchRecursively = (items: any): void => {
-      for (const item of items.values()) {
-        // Check if this item is in the right file
-        if (item.uri?.fsPath === filePath) {
-          // Check if the item has tags that match
-          const itemTags = this.extractTagsFromTestItem(item);
-          if (this.tagsMatch(itemTags, tags)) {
-            matchingItems.push(item);
+    const searchRecursively = (items: Iterable<[string, vscode.TestItem]> | undefined): void => {
+      if (items && typeof (items as Iterable<[string, vscode.TestItem]>)[Symbol.iterator] === 'function') {
+        for (const [, item] of items) {
+          // Check if this item is in the right file
+          if (item.uri?.fsPath === filePath) {
+            // Check if the item has tags that match
+            const itemTags = this.extractTagsFromTestItem(item);
+            if (this.tagsMatch(itemTags, tags)) {
+              matchingItems.push(item);
+            }
           }
-        }
 
-        // Search children recursively
-        searchRecursively(item.children);
+          // Search children recursively
+          searchRecursively(item.children);
+        }
       }
     };
 
@@ -931,11 +957,13 @@ export class CommandManager {
       this.logger.info("Refreshing tests in Test Explorer");
 
       // Call discoverTests to rebuild the entire test hierarchy with the new organization
-      this.testProvider.discoverTests().catch((error: any) => {
+      const provider = this.testProvider as TestProviderLike;
+      provider.discoverTests?.().catch((error: unknown) => {
         const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        this.logger.error("Failed to refresh tests", { error: errorMessage });
-        this.showErrorMessage(`Failed to refresh tests: ${errorMessage}`);
+          error instanceof Error ? error.message : String(error);
+        this.logger.error("Failed to refresh tests after organization change", {
+          error: errorMessage,
+        });
       });
 
       this.logger.info("Test refresh initiated successfully");
@@ -1505,88 +1533,70 @@ export class CommandManager {
       if (!this.testProvider) {
         throw new Error("Test provider not available");
       }
-
-      // Get the organization manager from the test provider
-      const organizationManager = (this.testProvider as any)
-        .organizationManager;
+      const provider = this.testProvider as TestProviderLike;
+      const organizationManager = provider.organizationManager;
       if (!organizationManager) {
         throw new Error("Organization manager not available");
       }
-
       // Get available strategies
       const availableStrategies = organizationManager.getAvailableStrategies();
-      let strategy: any;
+      let strategy: { name: string; description: string; strategy: OrganizationStrategy } | undefined;
       switch (strategyValue) {
         case "tag":
           strategy = availableStrategies.find(
-            (s: { strategy: any }) =>
-              s.strategy.strategyType === "TagBasedOrganization"
+            (s: { name: string; description: string; strategy: OrganizationStrategy }) => s.strategy.strategyType === "TagBasedOrganization"
           );
           break;
         case "file":
           strategy = availableStrategies.find(
-            (s: { strategy: any }) =>
-              s.strategy.strategyType === "FileBasedOrganization"
+            (s: { name: string; description: string; strategy: OrganizationStrategy }) => s.strategy.strategyType === "FileBasedOrganization"
           );
           break;
         case "scenarioType":
           strategy = availableStrategies.find(
-            (s: { strategy: any }) =>
-              s.strategy.strategyType === "ScenarioTypeOrganization"
+            (s: { name: string; description: string; strategy: OrganizationStrategy }) => s.strategy.strategyType === "ScenarioTypeOrganization"
           );
           break;
         case "flat":
           strategy = availableStrategies.find(
-            (s: { strategy: any }) =>
-              s.strategy.strategyType === "FlatOrganization"
+            (s: { name: string; description: string; strategy: OrganizationStrategy }) => s.strategy.strategyType === "FlatOrganization"
           );
           break;
         case "feature":
           strategy = availableStrategies.find(
-            (s: { strategy: any }) =>
-              s.strategy.strategyType === "FeatureBasedOrganization"
+            (s: { name: string; description: string; strategy: OrganizationStrategy }) => s.strategy.strategyType === "FeatureBasedOrganization"
           );
           break;
         default:
           strategy = availableStrategies[0];
       }
-
       if (!strategy) {
         throw new Error(`Strategy not found: ${strategyValue}`);
       }
-
       this.logger.info("Changing test organization strategy", {
         from: organizationManager.getStrategy().strategyType,
         to: strategy.strategy.strategyType,
       });
-
       // Set the strategy
       organizationManager.setStrategy(strategy.strategy);
-
       // Clear the discovery cache to force a fresh discovery
-      const discoveryManager = (this.testProvider as any).discoveryManager;
+      const discoveryManager = provider.discoveryManager;
       if (discoveryManager?.clearCache) {
         discoveryManager.clearCache();
         this.logger.info("Cleared test discovery cache");
       }
-
       // Wait a moment for the strategy change to take effect
       await new Promise((resolve) => setTimeout(resolve, 100));
-
       // Refresh tests to apply the new organization - wait for completion
       this.logger.info("Starting test discovery with new strategy");
-      await this.testProvider.discoverTests();
-
+      await provider.discoverTests?.();
       // Wait a moment for the discovery to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
-
       // Force refresh the Test Explorer view
       this.logger.info("Forcing Test Explorer refresh");
-      await (this.testProvider as any).forceRefreshTestExplorer();
-
+      await provider.forceRefreshTestExplorer?.();
       // Wait a moment for the refresh to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
-
       // Also trigger VS Code's built-in test refresh command
       try {
         await vscode.commands.executeCommand("testing.refreshTests");
@@ -1595,7 +1605,6 @@ export class CommandManager {
           error,
         });
       }
-
       this.logger.info(`Organization strategy changed to: ${strategy.name}`);
       vscode.window.showInformationMessage(
         `Organization strategy changed to: ${strategy.name}`
@@ -1603,8 +1612,10 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to set strategy", { error, strategyValue });
-      this.showErrorMessage(`Failed to set strategy: ${errorMessage}`);
+      this.logger.error("Failed to change organization strategy", { error });
+      this.showErrorMessage(
+        `Failed to change organization strategy: ${errorMessage}`
+      );
     }
   }
 
@@ -1616,28 +1627,23 @@ export class CommandManager {
       if (!this.testProvider) {
         throw new Error("Test provider not available");
       }
-
-      const organizationManager = (this.testProvider as any)
-        .organizationManager;
+      const provider = this.testProvider as TestProviderLike;
+      const organizationManager = provider.organizationManager;
       if (!organizationManager) {
         throw new Error("Organization manager not available");
       }
-
       const currentStrategy = organizationManager.getStrategy();
       const availableStrategies = organizationManager.getAvailableStrategies();
-
       this.logger.info("Current Organization Strategy:", {
         name: currentStrategy.strategyType,
         description: currentStrategy.getDescription(),
       });
-
       this.logger.info("Available Strategies:");
-      availableStrategies.forEach((s: any) => {
+      availableStrategies.forEach((s: { name: string; description: string; strategy: OrganizationStrategy }) => {
         this.logger.debug(
           `- ${s.name} (${s.description}) - Strategy: ${s.strategy.strategyType}`
         );
       });
-
       vscode.window.showInformationMessage(
         `Current Organization Strategy: ${currentStrategy.strategyType}`
       );

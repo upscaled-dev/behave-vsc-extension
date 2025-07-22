@@ -2,7 +2,7 @@
   "name": "behave-test-runner",
   "displayName": "Behave Test Runner",
   "description": "VS Code extension for Behave test discovery and running",
-  "version": "1.1.1",
+  "version": "1.1.7",
   "icon": "icon.png",
   "publisher": "upscaled-dev",
   "license": "MIT",
@@ -372,6 +372,7 @@
   "devDependencies": {
     "@commitlint/cli": "^18.0.0",
     "@commitlint/config-conventional": "^18.0.0",
+    "@types/chai": "^5.2.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/vscode": "^1.99.0",
@@ -379,6 +380,7 @@
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
+    "chai": "^5.2.1",
     "commitizen": "^4.3.0",
     "cz-conventional-changelog": "^3.3.0",
     "esbuild": "^0.25.3",
@@ -387,6 +389,7 @@
     "npm-run-all": "^4.1.5",
     "rimraf": "^5.0.10",
     "standard-version": "^9.5.0",
+    "typedoc": "^0.28.7",
     "typescript": "^5.8.3"
   },
   "config": {

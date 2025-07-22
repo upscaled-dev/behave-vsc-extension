@@ -196,7 +196,6 @@ Feature: Login
     const expected = '--name="Login with different credentials"';
     const found = sentCommands.some(cmd => cmd.includes(expected));
     if (!found) {
-      // eslint-disable-next-line no-console
       console.log("Sent commands:", sentCommands);
     }
     assert.ok(found, `Should run scenario outline with: ${expected}`);
@@ -219,7 +218,6 @@ Feature: Login
     const expected = '--name="Load testing with multiple users"';
     const found = sentCommands.some(cmd => cmd.includes(expected));
     if (!found) {
-      // eslint-disable-next-line no-console
       console.log("Sent commands:", sentCommands);
     }
     assert.ok(found, `Should run scenario outline with: ${expected}`);

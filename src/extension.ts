@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // We'll rely on the unique ID approach to avoid conflicts
 
   logger.info("🚀 Behave Test Runner extension is now active!");
-  console.log("Behave Test Runner extension activating..."); // Direct console log
+  logger.info("Behave Test Runner extension activating...");
 
   // Skip activation if running in test mode
   if (process.env["VSCODE_TEST"] === "true") {
@@ -125,7 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Set the test provider reference in the command manager for status updates
     if (testProvider && commandManager) {
-      commandManager.setTestProvider(testProvider);
+      commandManager.setTestProvider(testProvider as unknown);
     }
 
     // Register CodeLens provider for feature files
@@ -152,14 +152,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     isActivated = true;
     logger.info("✅ Extension components initialized successfully");
-    console.log("Behave Test Runner extension activated successfully!"); // Direct console log
+    logger.info("Behave Test Runner extension activated successfully!");
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     logger.error("❌ Error during extension activation:", {
       error: errorMessage,
     });
-    console.error("Extension activation error:", errorMessage); // Direct console log
+    logger.error("Extension activation error:", { error: errorMessage });
     vscode.window.showErrorMessage(
       `Failed to activate Behave Test Runner: ${errorMessage}`
     );

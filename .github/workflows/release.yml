@@ -2,53 +2,219 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-      - master
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0, v1.1.5, etc.
 
 jobs:
-  release:
-    name: Release
+  build-and-release:
+    name: Build and Release
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build extension
-        run: npm run package
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Upload VSIX
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./behave-test-runner-*.vsix
-          asset_name: behave-test-runner-${{ github.ref_name }}.vsix
-          asset_content_type: application/octet-stream 
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Behave
+      run: |
+        python -m pip install --upgrade pip
+        pip install behave
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Verify prerequisites
+      run: |
+        echo "Verifying prerequisites..."
+        node --version
+        npm --version
+        python --version
+        behave --version
+        npx tsc --version
+        npx eslint --version
+        echo "✅ All prerequisites verified"
+      
+    - name: Run tests
+      run: |
+        echo "Running tests before release..."
+        npm test
+        echo "✅ All tests passed"
+      
+    - name: Build extension
+      run: |
+        echo "Building extension..."
+        npm run compile
+        echo "✅ Extension built successfully"
+      
+    - name: Package extension
+      run: |
+        echo "Packaging extension..."
+        npm run package
+        echo "✅ Extension packaged successfully"
+      
+    - name: Create VSIX package
+      run: |
+        echo "Creating VSIX package..."
+        npm run package:vsix
+        echo "✅ VSIX package created"
+      
+    - name: Install vsce
+      run: |
+        echo "Installing vsce (Visual Studio Code Extension Manager)..."
+        npm install -g @vscode/vsce
+        vsce --version
+        echo "✅ vsce installed successfully"
+      
+    - name: Get version from package.json
+      id: get_version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Release version: $VERSION"
+      
+    - name: Get tag version
+      id: get_tag
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/}
+        echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
+        echo "Tag version: $TAG_VERSION"
+      
+    - name: Verify version consistency
+      run: |
+        PKG_VERSION=${{ steps.get_version.outputs.version }}
+        TAG_VERSION=${{ steps.get_tag.outputs.tag_version }}
+        
+        if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
+          echo "❌ Version mismatch!"
+          echo "Package.json version: $PKG_VERSION"
+          echo "Git tag version: $TAG_VERSION"
+          echo "These must match for a release."
+          exit 1
+        fi
+        
+        echo "✅ Version consistency verified: $PKG_VERSION"
+      
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "Generating changelog..."
+        # Get commits since last tag
+        if git describe --tags --abbrev=0 > /dev/null 2>&1; then
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0)
+          CHANGELOG=$(git log --pretty=format:"- %s" $PREVIOUS_TAG..HEAD)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s" --reverse)
+        fi
+        
+        # Escape newlines for GitHub Actions
+        CHANGELOG="${CHANGELOG//'%'/'%25'}"
+        CHANGELOG="${CHANGELOG//$'\n'/'%0A'}"
+        CHANGELOG="${CHANGELOG//$'\r'/'%0D'}"
+        
+        echo "changelog=$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "Changelog generated"
+      
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Behave Test Runner v${{ steps.get_version.outputs.version }}
+        body: |
+          ## Behave Test Runner Extension v${{ steps.get_version.outputs.version }}
+          
+          ### Changes in this release:
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Installation
+          
+          **From VSIX:**
+          1. Download the `.vsix` file from this release
+          2. In VS Code, go to Extensions (Ctrl+Shift+X)
+          3. Click the "..." menu and select "Install from VSIX..."
+          4. Select the downloaded file
+          
+          **From VS Code Marketplace:**
+          Search for "Behave Test Runner" in the Extensions marketplace
+          
+          ### Prerequisites
+          - Python with Behave installed (`pip install behave`)
+          - VS Code 1.99.0 or later
+          
+          ### Features
+          - 🔍 Automatic Test Discovery
+          - ▶️ Run Tests with one click
+          - 🐛 Debug Support
+          - 📊 Test Explorer Integration
+          - 🎯 CodeLens Support
+          - 🏷️ Tag-based Organization
+          - 📋 Scenario Outline Support
+          - 🚀 Parallel Execution
+          
+          ### Documentation
+          See the [README](https://github.com/upscaled-dev/behave-vsc-extension#readme) for detailed usage instructions.
+        draft: false
+        prerelease: false
+      
+    - name: Upload VSIX to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/behave-test-runner-${{ steps.get_version.outputs.version }}.vsix
+        asset_name: behave-test-runner-${{ steps.get_version.outputs.version }}.vsix
+        asset_content_type: application/octet-stream
+      
+    - name: Publish to Visual Studio Marketplace
+      run: |
+        echo "Publishing to Visual Studio Marketplace..."
+        
+        # Check if PAT token is available
+        if [[ -z "${{ secrets.VSCE_PAT }}" ]]; then
+          echo "❌ VSCE_PAT secret is not set. Skipping marketplace publish."
+          echo "To enable marketplace publishing, add VSCE_PAT secret to your repository."
+          exit 0
+        fi
+        
+        # Login to Visual Studio Marketplace
+        echo "${{ secrets.VSCE_PAT }}" | vsce login
+        
+        # Publish the extension
+        vsce publish --packagePath ./dist/behave-test-runner-${{ steps.get_version.outputs.version }}.vsix
+        
+        echo "✅ Extension published to Visual Studio Marketplace"
+      
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-artifacts
+        path: |
+          dist/
+          *.vsix
+        retention-days: 30
+      
+    - name: Notify success
+      run: |
+        echo "🎉 Release v${{ steps.get_version.outputs.version }} created successfully!"
+        echo "📦 VSIX package uploaded to GitHub releases"
+        echo "🔗 Release URL: ${{ steps.create_release.outputs.html_url }}"
+        
+        # Check if marketplace publish was attempted
+        if [[ -n "${{ secrets.VSCE_PAT }}" ]]; then
+          echo "🏪 Extension published to Visual Studio Marketplace"
+          echo "🔗 Marketplace URL: https://marketplace.visualstudio.com/items?itemName=upscaled-dev.behave-test-runner"
+        else
+          echo "⚠️  Marketplace publish skipped (VSCE_PAT not configured)"
+        fi 

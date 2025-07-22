@@ -106,19 +106,22 @@ suite("Command Manager Unit Tests", () => {
     const mockTestItem1 = {
       uri: { fsPath: "/test/feature1.feature" },
       description: "@smoke @regression",
-      children: { values: () => [] },
+      children: { [Symbol.iterator]: function* () { /* no children */ } },
     } as any;
 
     const mockTestItem2 = {
       uri: { fsPath: "/test/feature1.feature" },
       description: "@api @integration",
-      children: { values: () => [] },
+      children: { [Symbol.iterator]: function* () { /* no children */ } },
     } as any;
 
     const mockTestController = {
       items: {
-        values: () => [mockTestItem1, mockTestItem2],
-      },
+        [Symbol.iterator]: function* () {
+          yield ["id1", mockTestItem1];
+          yield ["id2", mockTestItem2];
+        }
+      }
     } as any;
 
     const matchingItems: vscode.TestItem[] = [];
