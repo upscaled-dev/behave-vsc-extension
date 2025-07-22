@@ -16,3 +16,4 @@ Feature: Demo Output Display
     When I perform a failing action
     Then I should see a failure
     And this demo step will fail because it is not implemented
+ 

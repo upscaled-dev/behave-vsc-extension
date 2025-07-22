@@ -132,12 +132,50 @@ export class TestExecutor {
 
       const workingDir = this.getWorkingDirectory();
 
+      // Check if this is a scenario outline example
+      const isScenarioOutlineExample = this.isScenarioOutlineExample(
+        filePath,
+        lineNumber,
+        scenarioName
+      );
+
+      // If scenarioName is a scenario outline (not an example), debug all examples in one command
+      if (
+        scenarioName &&
+        !isScenarioOutlineExample &&
+        filePath &&
+        fs.existsSync(filePath)
+      ) {
+        // Debug a single command with --name="<outline name>" (without line number)
+        const args = [filePath, "--name", scenarioName];
+        
+        const debugConfig = {
+          name: `Debug: ${scenarioName}`,
+          type: "python",
+          request: "launch",
+          module: "behave",
+          args,
+          cwd: workingDir,
+          console: "integratedTerminal",
+          justMyCode: false,
+        };
+
+        await this.debug.startDebugging(undefined, debugConfig);
+        return;
+      }
+
       // Build args array similar to runScenario method
       const args = [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
 
       // Add scenario name filter if provided
       if (scenarioName) {
-        args.push("--name", scenarioName);
+        // For scenario outline examples, we need to use the original outline name
+        if (isScenarioOutlineExample) {
+          const originalOutlineName = this.extractOriginalOutlineName(scenarioName);
+          args.push("--name", originalOutlineName);
+        } else {
+          args.push("--name", scenarioName);
+        }
       }
 
       const debugConfig = {

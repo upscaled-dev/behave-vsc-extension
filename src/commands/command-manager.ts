@@ -628,26 +628,26 @@ export class CommandManager {
       let testResult: import("../types").TestRunResult;
 
       if (lineNumber) {
-        // Check if this is a scenario outline example
-        const isScenarioOutlineExample =
-          this.isScenarioOutlineExample(scenarioName);
+      // Check if this is a scenario outline example
+      const isScenarioOutlineExample =
+        this.isScenarioOutlineExample(scenarioName);
 
-        if (isScenarioOutlineExample) {
+      if (isScenarioOutlineExample) {
           // For scenario outline examples, run ONLY the specific example (not the whole outline)
-          this.logger.info(
+        this.logger.info(
             `Running scenario outline example: ${
               scenarioName ?? "unnamed"
             } at line ${lineNumber}`,
-            {
+          {
               scenarioName,
               lineNumber,
-            }
-          );
+          }
+        );
 
           // Run only the specific example by name
           await this.testExecutor.runScenario({
-            filePath,
-            lineNumber,
+          filePath,
+          lineNumber,
             scenarioName: scenarioName ?? "",
           });
 
@@ -655,31 +655,31 @@ export class CommandManager {
             filePath,
             lineNumber,
             scenarioName: scenarioName ?? "",
-          });
-        } else {
-          // Check if this is a scenario outline (not an example)
-          // We need to parse the feature file to determine this
-          const isScenarioOutline = this.isScenarioOutline(
-            filePath,
-            lineNumber,
-            scenarioName
-          );
+        });
+      } else {
+        // Check if this is a scenario outline (not an example)
+        // We need to parse the feature file to determine this
+        const isScenarioOutline = this.isScenarioOutline(
+          filePath,
+          lineNumber,
+          scenarioName
+        );
 
-          if (isScenarioOutline) {
+        if (isScenarioOutline) {
             // For scenario outlines, run with scenarioName to run all examples in one command
-            this.logger.info(
+          this.logger.info(
               `Running scenario outline: ${
                 scenarioName ?? "unnamed"
               } (will run all examples in one command)`,
-              {
-                scenarioName,
-              }
-            );
+            {
+              scenarioName,
+            }
+          );
 
             // First, run the scenario in the terminal to show output to user
             await this.testExecutor.runScenario({
-              filePath,
-              lineNumber,
+            filePath,
+            lineNumber,
               ...(scenarioName !== undefined ? { scenarioName } : {}),
             });
 
@@ -687,13 +687,13 @@ export class CommandManager {
               filePath,
               lineNumber,
               ...(scenarioName !== undefined ? { scenarioName } : {}),
-            });
-          } else {
-            // Regular scenario
+          });
+        } else {
+          // Regular scenario
             // First, run the scenario in the terminal to show output to user
             await this.testExecutor.runScenario({
-              filePath,
-              lineNumber,
+            filePath,
+            lineNumber,
               ...(scenarioName ? { scenarioName } : {}),
             });
 
@@ -701,9 +701,9 @@ export class CommandManager {
               filePath,
               lineNumber,
               ...(scenarioName ? { scenarioName } : {}),
-            });
-          }
+          });
         }
+      }
       } else {
         // No line number specified, run the entire feature file
         this.logger.info(`Running entire feature file: ${filePath}`);
@@ -825,8 +825,8 @@ export class CommandManager {
     try {
       const [filePath, lineNumber, scenarioName] = args as [
         string,
-        number,
-        string
+        number | undefined,
+        string | undefined
       ];
 
       if (!filePath) {
@@ -839,10 +839,42 @@ export class CommandManager {
         scenarioName,
       });
 
+      // Handle scenario outline examples the same way as runScenario
+      if (lineNumber && scenarioName) {
+        // Check if this is a scenario outline example
+        const isScenarioOutlineExample = this.isScenarioOutlineExample(scenarioName);
+
+        if (isScenarioOutlineExample) {
+          this.logger.info(
+            `Debugging scenario outline example: ${scenarioName} at line ${lineNumber}`,
+            {
+              scenarioName,
+              lineNumber,
+            }
+          );
+        } else {
+          // Check if this is a scenario outline (not an example)
+          const isScenarioOutline = this.isScenarioOutline(
+            filePath,
+            lineNumber,
+            scenarioName
+          );
+
+          if (isScenarioOutline) {
+            this.logger.info(
+              `Debugging scenario outline: ${scenarioName} (will debug all examples in one session)`,
+              {
+                scenarioName,
+              }
+            );
+          }
+        }
+      }
+
       await this.testExecutor.debugScenario({
         filePath,
-        lineNumber,
-        scenarioName,
+        ...(lineNumber !== undefined ? { lineNumber } : {}),
+        ...(scenarioName ? { scenarioName } : {}),
       });
 
       this.logger.info("Scenario debug started successfully");
@@ -1215,7 +1247,8 @@ export class CommandManager {
       await this.testExecutor.debugScenario({
         filePath,
         lineNumber,
-        scenarioName,
+        ...(scenarioName ? { scenarioName } : {}),
+        debug: true,
       });
 
       this.logger.info("Scenario debug with context started successfully");

@@ -128,7 +128,7 @@ suite("TestExecutor Unit Tests", () => {
       sendText: (text: string) => {
         sentCommands.push(text);
         // Print the actual command for debugging
-
+         
         console.log("COMMAND SENT TO TERMINAL:", text);
       },
     };
@@ -146,7 +146,7 @@ suite("TestExecutor Unit Tests", () => {
     await freshTestExecutor.runScenario(options);
 
     // Check that the behave command was sent (it should be the last command)
-
+     
     console.log("ALL SENT COMMANDS:", sentCommands);
     const behaveCommand = sentCommands.find((cmd) =>
       cmd.includes("/test/path/test.feature:5")
@@ -673,4 +673,112 @@ test('Should run only the specific scenario outline example from CodeLens', asyn
   await manager['runScenario'](filePath, lineNumber, scenarioName);
   // Should run only the specific example
   expect(calledWith).to.include({ filePath, lineNumber, scenarioName });
+});
+
+test('Should debug only the specific scenario outline example from CodeLens with quoted name', async () => {
+  const manager = CommandManager.getInstance();
+  // Spy on testExecutor.debugScenario
+  let calledWith: any = null;
+  manager['testExecutor'].debugScenario = async (opts: any) => {
+    calledWith = opts;
+    return Promise.resolve();
+  };
+  // Simulate debugging a scenario outline example from CodeLens
+  const filePath = '/path/to/file.feature';
+  const lineNumber = 10;
+  const scenarioName = '1: Login with different credentials - username: admin, password: secret, result: success';
+  await manager['debugScenario'](filePath, lineNumber, scenarioName);
+  // Should pass the scenarioName without quotes (TestExecutor handles quoting internally)
+  expect(calledWith).to.include({ filePath, lineNumber });
+  expect(calledWith.scenarioName).to.equal(scenarioName);
+});
+
+suite('Behave Command Consistency', () => {
+  let testExecutor: TestExecutor;
+  let sentCommands: string[];
+  let debugArgs: any[];
+  let mockExtensionConfig: any;
+
+  setup(() => {
+    sentCommands = [];
+    debugArgs = [];
+    mockExtensionConfig = {
+      getIntelligentBehaveCommand: async () => 'behave',
+      tags: undefined,
+      outputFormat: undefined,
+      dryRun: false,
+    };
+    testExecutor = new TestExecutor();
+    (testExecutor as any).config = mockExtensionConfig;
+    // Mock terminal
+    (testExecutor as any).executeCommand = (cmd: string) => {
+      sentCommands.push(cmd);
+    };
+    // Mock debug
+    (testExecutor as any).debug = {
+      startDebugging: (_ws: any, config: any) => {
+        debugArgs.push(config.args);
+        return Promise.resolve(true);
+      },
+    };
+    // Mock fs.existsSync to always return true
+    (testExecutor as any).fs = { existsSync: () => true };
+    // Patch fs.existsSync globally for scenario outline detection
+    (require('fs').existsSync as any) = () => true;
+  });
+
+  test('debugScenario and runScenario generate the same command for scenario outline', async () => {
+    const options = {
+      filePath: '/test/path/outline.feature',
+      scenarioName: 'Outline Scenario',
+      lineNumber: 10,
+    };
+    // Run scenario outline
+    await testExecutor.runScenario(options);
+    // Debug scenario outline
+    await testExecutor.debugScenario(options);
+    // Extract the behave command from runScenario
+    const runCmd = sentCommands.find(cmd => cmd.includes('behave'));
+    assert.ok(runCmd, 'No behave command was captured for runScenario');
+    // Extract the behave args from debugScenario
+    const debugCmdArgs = debugArgs[0];
+    // The run command should include --name="Outline Scenario"
+    assert.ok(runCmd!.includes('--name="Outline Scenario"'));
+    // The debug args should include --name and the scenario name as separate arguments
+    const debugNameIdx = debugCmdArgs.findIndex((arg: string) => arg === '--name');
+    assert.ok(debugNameIdx !== -1 && debugCmdArgs[debugNameIdx + 1] === 'Outline Scenario');
+    // The file path should match
+    assert.ok(runCmd!.includes(options.filePath));
+    assert.strictEqual(debugCmdArgs[0].startsWith(options.filePath), true);
+  });
+
+  test('debugScenario and runScenario generate the same command for scenario outline example', async () => {
+    const exampleName = '1: Outline Scenario - param: value';
+    const options = {
+      filePath: '/test/path/outline.feature',
+      scenarioName: exampleName,
+      lineNumber: 12,
+    };
+    
+    // Run scenario outline example
+    await testExecutor.runScenario(options);
+    
+    // Debug scenario outline example
+    await testExecutor.debugScenario(options);
+    
+    // Extract the behave command from runScenario
+    const runCmd = sentCommands.find(cmd => cmd.includes('behave'));
+    assert.ok(runCmd, 'No behave command was captured for runScenario (example)');
+    // Extract the behave args from debugScenario
+    assert.ok(debugArgs[0], 'No debug args were captured for debugScenario (example)');
+    const debugCmdArgs = debugArgs[0];
+    // The run command should include --name with the original outline name
+    assert.ok(runCmd!.includes('--name="Outline Scenario"'));
+    // The debug args should include --name and the original outline name as separate arguments
+    const debugNameIdx = debugCmdArgs.findIndex((arg: string) => arg === '--name');
+    assert.ok(debugNameIdx !== -1 && debugCmdArgs[debugNameIdx + 1] === 'Outline Scenario');
+    // The file path should match
+    assert.ok(runCmd!.includes(options.filePath));
+    assert.strictEqual(debugCmdArgs[0].startsWith(options.filePath), true);
+  });
 });

@@ -29,3 +29,4 @@ def step_impl(context):
 def step_impl(context):
     """This step will fail because it's not implemented"""
     raise NotImplementedError("This step is intentionally not implemented to demonstrate failure output")
+ 

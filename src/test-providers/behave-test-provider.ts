@@ -905,8 +905,8 @@ export class BehaveTestProvider {
 
             // Mark test based on actual result
             if (testResult.success) {
-              run.passed(test);
-              this.updateTestStatus(test.id, "passed");
+            run.passed(test);
+            this.updateTestStatus(test.id, "passed");
 
               // Log success with output summary
               Logger.getInstance().info(`Test passed: ${test.label}`, {
@@ -1000,8 +1000,8 @@ export class BehaveTestProvider {
 
           // Mark the group test based on whether all feature files passed
           if (allPassed) {
-            run.passed(test);
-            this.updateTestStatus(test.id, "passed");
+          run.passed(test);
+          this.updateTestStatus(test.id, "passed");
           } else {
             const failedResults = results.filter((r) => !r.success);
             const errorMessage = `Group test failed: ${failedResults.length} feature files failed`;
@@ -1229,7 +1229,7 @@ export class BehaveTestProvider {
 
       for (const test of request.include ?? []) {
         if (allPassed) {
-          run.passed(test);
+        run.passed(test);
           this.updateTestStatus(test.id, "passed");
         } else {
           const failedResults = results.filter((r) => !r.success);
@@ -1295,7 +1295,7 @@ export class BehaveTestProvider {
 
         if (result.success) {
           run.passed(child);
-          this.updateTestStatus(child.id, "passed");
+        this.updateTestStatus(child.id, "passed");
         } else {
           run.failed(
             child,
