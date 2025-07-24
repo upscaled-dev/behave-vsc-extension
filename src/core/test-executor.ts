@@ -9,6 +9,7 @@ import {
 } from "../types/index";
 import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "./extension-config";
+import { parseBehaveJsonOutput } from "../utils/behave-json-parser";
 
 /**
  * Handles execution of Behave tests
@@ -604,14 +605,21 @@ if __name__ == "__main__":
    */
   public async runScenarioWithOutput(
     options: TestExecutionOptions
-  ): Promise<TestRunResult> {
+  ): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
     const startTime = Date.now();
-    const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } =
+    const { filePath, lineNumber, scenarioName, tags, dryRun } =
       options;
     const workingDir = this.getWorkingDirectory();
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
+      Logger.getInstance().info("Preparing to run scenario with output", {
+        filePath,
+        lineNumber,
+        scenarioName,
+        tags,
+        dryRun,
+      });
       // Check if this is a scenario outline example
       const isScenarioOutlineExample = this.isScenarioOutlineExample(
         filePath,
@@ -643,31 +651,61 @@ if __name__ == "__main__":
         command += " --no-skipped";
       }
 
-      // Add output format
-      const format = outputFormat ?? this.config.outputFormat;
-      if (format && format !== "pretty") {
-        command += ` --format=${format}`;
-      }
+      // Always use JSON output for parsing
+      command += " --format=json";
 
       // Add dry run option
       if (dryRun || this.config.dryRun) {
         command += " --dry-run";
       }
 
+      Logger.getInstance().info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
+
+      Logger.getInstance().info("Behave command executed", {
+        command,
+        returnCode: result.returnCode,
+        stdoutLength: result.output.length,
+        stderrLength: result.error.length,
+        duration,
+      });
+
+      const scenarioResults: Record<string, string> = {};
+      try {
+        Logger.getInstance().info("Parsing Behave JSON output");
+        const parsed = parseBehaveJsonOutput(result.output);
+        for (const s of parsed) {
+          if (s.filePath && s.lineNumber) {
+            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
+          }
+        }
+        Logger.getInstance().info("Parsed scenario results", { scenarioResults });
+      } catch {
+        Logger.getInstance().error("Failed to parse Behave JSON output", { output: result.output });
+        // If parsing fails, fallback to overall result
+      }
 
       return {
         success: result.success,
         output: result.output,
         error: result.error,
         duration,
+        scenarioResults,
       };
     } catch (error) {
       const duration = Math.max(1, Date.now() - startTime);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-
+      Logger.getInstance().error("runScenarioWithOutput failed", {
+        error: errorMessage,
+        filePath,
+        lineNumber,
+        scenarioName,
+        tags,
+        dryRun,
+        duration,
+      });
       return {
         success: false,
         output: "",
@@ -684,12 +722,17 @@ if __name__ == "__main__":
    */
   public async runFeatureFileWithOutput(
     options: FeatureExecutionOptions
-  ): Promise<TestRunResult> {
+  ): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
     const startTime = Date.now();
     const workingDir = this.getWorkingDirectory();
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
+      Logger.getInstance().info("Preparing to run feature file with output", {
+        filePath: options.filePath,
+        tags: options.tags,
+        dryRun: options.dryRun,
+      });
       let command = `${behaveCommand} "${options.filePath}"`;
 
       // Add tags if specified
@@ -698,31 +741,59 @@ if __name__ == "__main__":
         command += " --no-skipped";
       }
 
-      // Add output format
-      const outputFormat = options.outputFormat ?? this.config.outputFormat;
-      if (outputFormat && outputFormat !== "pretty") {
-        command += ` --format=${outputFormat}`;
-      }
+      // Always use JSON output for parsing
+      command += " --format=json";
 
       // Add dry run option
       if (options.dryRun || this.config.dryRun) {
         command += " --dry-run";
       }
 
+      Logger.getInstance().info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
+
+      Logger.getInstance().info("Behave command executed", {
+        command,
+        returnCode: result.returnCode,
+        stdoutLength: result.output.length,
+        stderrLength: result.error.length,
+        duration,
+      });
+
+      const scenarioResults: Record<string, string> = {};
+      try {
+        Logger.getInstance().info("Parsing Behave JSON output");
+        const parsed = parseBehaveJsonOutput(result.output);
+        for (const s of parsed) {
+          if (s.filePath && s.lineNumber) {
+            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
+          }
+        }
+        Logger.getInstance().info("Parsed scenario results", { scenarioResults });
+      } catch {
+        Logger.getInstance().error("Failed to parse Behave JSON output", { output: result.output });
+        // If parsing fails, fallback to overall result
+      }
 
       return {
         success: result.success,
         output: result.output,
         error: result.error,
         duration,
+        scenarioResults,
       };
     } catch (error) {
       const duration = Math.max(1, Date.now() - startTime);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-
+      Logger.getInstance().error("runFeatureFileWithOutput failed", {
+        error: errorMessage,
+        filePath: options.filePath,
+        tags: options.tags,
+        dryRun: options.dryRun,
+        duration,
+      });
       return {
         success: false,
         output: "",
@@ -862,6 +933,50 @@ if __name__ == "__main__":
     if (this.terminal) {
       this.terminal.dispose();
       this.terminal = undefined;
+    }
+  }
+
+  // Add methods for tag-based group execution
+  public async runAllTestsWithTags(tag: string): Promise<void> {
+    const workingDir = this.getWorkingDirectory();
+    const behaveCommand = await this.config.getIntelligentBehaveCommand();
+    const command = `${behaveCommand} --tags="${tag}" --no-skipped`;
+    this.executeCommand(command, workingDir);
+  }
+
+  public async runAllTestsWithTagsOutput(tag: string): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
+    const startTime = Date.now();
+    const workingDir = this.getWorkingDirectory();
+    const behaveCommand = await this.config.getIntelligentBehaveCommand();
+    const command = `${behaveCommand} --tags="${tag}" --no-skipped --format=json`;
+    try {
+      const result = await this.executeCommandWithOutput(command, workingDir);
+      const duration = Math.max(1, Date.now() - startTime);
+      const scenarioResults: Record<string, string> = {};
+      try {
+        const parsed = parseBehaveJsonOutput(result.output);
+        for (const s of parsed) {
+          if (s.filePath && s.lineNumber) {
+            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
+          }
+        }
+      } catch {}
+      return {
+        success: result.success,
+        output: result.output,
+        error: result.error,
+        duration,
+        scenarioResults,
+      };
+    } catch (error) {
+      const duration = Math.max(1, Date.now() - startTime);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      return {
+        success: false,
+        output: "",
+        error: errorMessage,
+        duration,
+      };
     }
   }
 }

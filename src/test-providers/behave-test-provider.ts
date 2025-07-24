@@ -6,6 +6,8 @@ import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "../core/extension-config";
 import { TestDiscoveryManager } from "../core/test-discovery-manager";
 import { TestOrganizationManager } from "../core/test-organization";
+import * as path from 'path';
+import { getScenarioStatusForTestItem } from "../utils/test-item-mapping";
 
 /**
  * Provides test discovery and execution for Behave tests
@@ -21,6 +23,9 @@ export class BehaveTestProvider {
     new Map();
   private testStatusByLocation: Map<string, "started" | "passed" | "failed"> =
     new Map();
+  private isTestRunning = false;
+  // Store scenario outline parent-child relationships for hierarchy view
+  private scenarioOutlineParents = new Map<string, string>(); // exampleId -> parentId
 
   constructor(testController: vscode.TestController) {
     this.testController = testController;
@@ -79,16 +84,6 @@ export class BehaveTestProvider {
       }
     );
     debugProfile.configureHandler = () => {};
-
-    // Create parallel run profile with proper gutter button type
-    const parallelProfile = this.testController.createRunProfile(
-      "Run in Parallel",
-      vscode.TestRunProfileKind.Run,
-      async (request) => {
-        await this.runTestsInParallel(request);
-      }
-    );
-    parallelProfile.configureHandler = () => {};
   }
 
   /**
@@ -112,13 +107,56 @@ export class BehaveTestProvider {
   ): void {
     this.testStatusCache.set(testId, status);
 
-    // Also store by location for organization-independent tracking
+    // Also store by location for restoration
     const locationKey = this.getLocationKey(testId);
     if (locationKey) {
       this.testStatusByLocation.set(locationKey, status);
     }
 
-    Logger.getInstance().debug(
+    // Only update parents in hierarchy view
+    if (this.getOrganizationStrategy().strategyType === "FeatureBasedOrganization") {
+      const parentId = this.scenarioOutlineParents.get(testId);
+      Logger.getInstance().info("Checking for parent update", {
+        testId,
+        parentId,
+        hasParent: !!parentId,
+        organizationStrategy: this.getOrganizationStrategy().strategyType
+      });
+      if (parentId) {
+        // Only update parent if it belongs to the same feature file
+        const childFeatureFile = this.extractFeatureFileFromTestId(testId);
+        const parentFeatureFile = this.extractFeatureFileFromTestId(parentId);
+        
+        Logger.getInstance().info("Feature file comparison", {
+          childId: testId,
+          parentId,
+          childFeatureFile,
+          parentFeatureFile,
+          sameFeature: childFeatureFile === parentFeatureFile
+        });
+        
+        if (childFeatureFile && parentFeatureFile && childFeatureFile === parentFeatureFile) {
+        Logger.getInstance().info("Found parent for child, updating parent status", {
+          childId: testId,
+          parentId,
+            childStatus: status,
+            featureFile: childFeatureFile
+        });
+        this.updateScenarioOutlineParentStatus(parentId);
+        } else {
+          Logger.getInstance().debug("Skipping parent update - different feature files", {
+            childId: testId,
+            parentId,
+            childFeatureFile,
+            parentFeatureFile
+          });
+        }
+      } else {
+        Logger.getInstance().debug("No parent found for child", { childId: testId });
+      }
+    }
+
+    Logger.getInstance().info(
       `Updated test status cache for ${testId}: ${status}`
     );
   }
@@ -333,10 +371,9 @@ export class BehaveTestProvider {
       const text = new TextDecoder().decode(content);
       const parsed = FeatureParser.parseFeatureContent(text);
 
-      if (!parsed) {
-        Logger.getInstance().warn(
-          `Failed to parse feature file: ${file.fsPath}`
-        );
+      // Only proceed if featureLineNumber is a valid number
+      if (!parsed || typeof parsed.featureLineNumber !== 'number') {
+        Logger.getInstance().warn(`Invalid or unparsable feature file: ${file.fsPath}`);
         return;
       }
 
@@ -367,22 +404,33 @@ export class BehaveTestProvider {
 
       // Add scenarios to feature
       for (const [outlineName, scenarios] of scenarioGroups) {
+        Logger.getInstance().info("Processing scenario group", {
+          outlineName,
+          scenarioCount: scenarios.length,
+          firstScenarioIsOutline: scenarios[0]?.isScenarioOutline,
+          scenarioNames: scenarios.map(s => s.name)
+        });
+
         if (scenarios.length === 1 && !scenarios[0]?.isScenarioOutline) {
-          // Single regular scenario - add directly to feature for individual run/debug buttons
           const scenario = scenarios[0];
-          if (scenario) {
+          if (scenario && typeof scenario.featureLineNumber === 'number') {
             const scenarioItem = this.createScenarioTestItem(
               file,
-              scenario,
-              `${file.fsPath}:${scenario.lineNumber}`
+              scenario
             );
             featureItem.children.add(scenarioItem);
+          } else {
+            Logger.getInstance().warn(`Scenario missing featureLineNumber or is undefined, skipping: ${scenario?.name}`);
           }
         } else if (scenarios.length > 1 && scenarios[0]?.isScenarioOutline) {
-          // Multiple examples from same outline - create parent outline item AND individual examples
+          Logger.getInstance().info("Creating scenario outline parent", {
+            outlineName,
+            scenarioCount: scenarios.length,
+            firstScenario: scenarios[0]?.name
+          });
+          
           const hasOutlineLineNumber = scenarios[0]?.outlineLineNumber;
-          if (hasOutlineLineNumber) {
-            // Create the outline item for "run all examples" functionality
+          if (hasOutlineLineNumber && typeof scenarios[0].featureLineNumber === 'number') {
             const outlineItem = this.createOutlineTestItem(
               file,
               outlineName,
@@ -391,36 +439,57 @@ export class BehaveTestProvider {
             );
             featureItem.children.add(outlineItem);
           } else {
-            // If no outline line number, add examples individually to avoid overlapping
+            Logger.getInstance().warn("Missing outline line number, creating individual scenarios", {
+              outlineName,
+              hasOutlineLineNumber,
+              featureLineNumber: scenarios[0]?.featureLineNumber
+            });
+            
             for (const scenario of scenarios) {
-              const scenarioItem = this.createScenarioTestItem(
-                file,
-                scenario,
-                `${file.fsPath}:${scenario.lineNumber}`
-              );
-              featureItem.children.add(scenarioItem);
+              if (typeof scenario.featureLineNumber === 'number') {
+                const scenarioItem = this.createScenarioTestItem(
+                  file,
+                  scenario
+                );
+                featureItem.children.add(scenarioItem);
+              } else {
+                Logger.getInstance().warn(`Scenario missing featureLineNumber, skipping: ${scenario.name}`);
+              }
             }
           }
         } else if (scenarios.length === 1 && scenarios[0]?.isScenarioOutline) {
-          // Single example from outline - add directly as individual test item
+          Logger.getInstance().info("Single scenario outline example", {
+            outlineName,
+            scenarioName: scenarios[0]?.name
+          });
+          
           const scenario = scenarios[0];
-          if (scenario) {
+          if (scenario && typeof scenario.featureLineNumber === 'number') {
             const scenarioItem = this.createScenarioTestItem(
               file,
-              scenario,
-              `${file.fsPath}:${scenario.lineNumber}`
+              scenario
             );
             featureItem.children.add(scenarioItem);
+          } else {
+            Logger.getInstance().warn(`Scenario missing featureLineNumber, skipping: ${scenario?.name}`);
           }
         } else {
-          // Multiple regular scenarios - add each individually for individual run/debug buttons
+          Logger.getInstance().info("Fallback: creating individual scenarios", {
+            outlineName,
+            scenarioCount: scenarios.length,
+            firstScenarioIsOutline: scenarios[0]?.isScenarioOutline
+          });
+          
           for (const scenario of scenarios) {
-            const scenarioItem = this.createScenarioTestItem(
-              file,
-              scenario,
-              `${file.fsPath}:${scenario.lineNumber}`
-            );
-            featureItem.children.add(scenarioItem);
+            if (typeof scenario.featureLineNumber === 'number') {
+              const scenarioItem = this.createScenarioTestItem(
+                file,
+                scenario
+              );
+              featureItem.children.add(scenarioItem);
+            } else {
+              Logger.getInstance().warn(`Scenario missing featureLineNumber, skipping: ${scenario.name}`);
+            }
           }
         }
       }
@@ -459,12 +528,26 @@ export class BehaveTestProvider {
   ): Map<string, Scenario[]> {
     const groups = new Map<string, Scenario[]>();
 
+    Logger.getInstance().info("Grouping scenarios by outline", {
+      totalScenarios: scenarios.length,
+      scenarioNames: scenarios.map(s => s.name),
+      scenarioOutlineFlags: scenarios.map(s => s.isScenarioOutline)
+    });
+
     for (const scenario of scenarios) {
       if (scenario.isScenarioOutline) {
         // Extract the original outline name from the example name
         // Example: "1: Load testing with multiple users - user_count: 10" -> "Load testing with multiple users"
         const match = scenario.name.match(/^\d+:\s*(.+?)\s*-\s*/);
         const outlineName = match ? match[1] : scenario.name;
+
+        Logger.getInstance().info("Processing scenario outline example", {
+          scenarioName: scenario.name,
+          match: match ? match[0] : null,
+          outlineName,
+          lineNumber: scenario.lineNumber,
+          outlineLineNumber: scenario.outlineLineNumber
+        });
 
         // Ensure outlineName is a string
         if (outlineName && typeof outlineName === "string") {
@@ -477,14 +560,20 @@ export class BehaveTestProvider {
           }
         }
       } else {
-        // Regular scenario - each gets its own individual group for individual buttons
-        // Use a unique key to ensure each scenario gets its own group
-        const groupKey = `scenario_${
-          scenario.lineNumber
-        }_${scenario.name.replace(/\s+/g, "_")}`;
+        // Regular scenario - use file path and line number for uniqueness
+        const groupKey = `${scenario.filePath}:${scenario.lineNumber}`;
         groups.set(groupKey, [scenario]);
       }
     }
+
+    Logger.getInstance().info("Grouped scenarios result", {
+      groupCount: groups.size,
+      groups: Array.from(groups.entries()).map(([name, scenarios]) => ({
+        name,
+        scenarioCount: scenarios.length,
+        scenarioNames: scenarios.map(s => s.name)
+      }))
+    });
 
     return groups;
   }
@@ -510,7 +599,7 @@ export class BehaveTestProvider {
     );
 
     // Configure the outline test item with proper gutter button positioning
-    outlineItem.canResolveChildren = true;
+    outlineItem.canResolveChildren = false;
     outlineItem.description = `${examples.length} example(s)`;
 
     // Set the range to the scenario outline line for proper gutter button positioning
@@ -530,12 +619,16 @@ export class BehaveTestProvider {
     // Add each example as a child for individual run/debug buttons
     // Each example will have its own gutter button at its specific line
     for (const example of examples) {
-      const exampleItem = this.createScenarioTestItem(
-        file,
-        example,
-        `${file.fsPath}:${example.lineNumber}`
-      );
-      outlineItem.children.add(exampleItem);
+      if (typeof example.featureLineNumber === 'number') {
+        const exampleItem = this.createScenarioTestItem(
+          file,
+          example,
+          testId // Pass the parent test item ID
+        );
+        outlineItem.children.add(exampleItem);
+      } else {
+        Logger.getInstance().warn(`Outline example missing featureLineNumber, skipping: ${example.name}`);
+      }
     }
 
     return outlineItem;
@@ -545,16 +638,18 @@ export class BehaveTestProvider {
    * Create a test item for a scenario
    * @param file - Feature file URI
    * @param scenario - Scenario data
-   * @param testId - Test item ID
+   * @param parentTestId - Optional parent test item ID for scenario outline examples
    * @returns Test item
    */
   private createScenarioTestItem(
     file: vscode.Uri,
     scenario: Scenario,
-    testId: string
+    parentTestId?: string
   ): vscode.TestItem {
+    // Always use absolute file path and scenario.lineNumber for ID
+    const id = `${scenario.filePath}:${scenario.lineNumber}`;
     const scenarioItem = this.testController.createTestItem(
-      testId,
+      id,
       scenario.name,
       file
     );
@@ -576,6 +671,19 @@ export class BehaveTestProvider {
     // Add tags as metadata
     if (scenario.tags && scenario.tags.length > 0) {
       scenarioItem.description += ` | Tags: ${scenario.tags.join(", ")}`;
+    }
+
+    // Only store parent relationships in hierarchy view
+    if (this.getOrganizationStrategy().strategyType === "FeatureBasedOrganization" && scenario.outlineLineNumber) {
+      // Use the provided parent test item ID if available, otherwise fall back to line-based ID
+      const parentId = parentTestId ?? `${scenario.filePath}:${scenario.outlineLineNumber}`;
+      this.scenarioOutlineParents.set(id, parentId);
+      Logger.getInstance().info("Stored scenario outline parent-child relationship", {
+        exampleId: id,
+        parentId,
+        exampleName: scenario.name,
+        outlineLineNumber: scenario.outlineLineNumber
+      });
     }
 
     return scenarioItem;
@@ -785,9 +893,20 @@ export class BehaveTestProvider {
    * @param request - Test run request
    */
   private async runTests(request: vscode.TestRunRequest): Promise<void> {
+    if (this.isTestRunning) {
+      vscode.window.showWarningMessage("A test run is already in progress. Please wait for it to finish before starting another.");
+      return;
+    }
+    this.isTestRunning = true;
     const run = this.testController.createTestRun(request);
 
     try {
+      Logger.getInstance().info("Processing test run request", {
+        includeCount: request.include?.length ?? 0,
+        excludeCount: request.include?.length ?? 0,
+        includeIds: request.include?.map(t => ({ id: t.id, label: t.label, hasChildren: t.children.size > 0 })) ?? []
+      });
+      
       for (const test of request.include ?? []) {
         run.started(test);
 
@@ -800,18 +919,20 @@ export class BehaveTestProvider {
           const isGroupTest = this.isGroupTest(test.id);
           const scenarioName = isFeatureFile ? undefined : test.label;
 
-          // Debug logging to understand what's being executed
-          Logger.getInstance().info(`Executing test: ${test.label}`, {
-            testId: test.id,
-            filePath: test.uri.fsPath,
-            lineNumber,
-            isFeatureFile,
-            isGroupTest,
-            scenarioName,
-          });
+                  // Debug logging to understand what's being executed
+        Logger.getInstance().info(`Executing test: ${test.label}`, {
+          testId: test.id,
+          filePath: test.uri.fsPath,
+          lineNumber,
+          isFeatureFile,
+          isGroupTest,
+          scenarioName,
+          childrenCount: test.children.size,
+          hasChildren: test.children.size > 0
+        });
 
           try {
-            let testResult: import("../types").TestRunResult;
+            let testResult: import("../types").TestRunResult & { scenarioResults?: Record<string, string> };
 
             if (isFeatureFile) {
               // Run the entire feature file
@@ -828,8 +949,178 @@ export class BehaveTestProvider {
                 filePath: test.uri.fsPath,
               });
 
-              // Mark all child tests based on the feature file result
-              this.markAllChildrenBasedOnResult(test, run, testResult);
+              Logger.getInstance().info("ScenarioResults mapping for feature", { scenarioResults: testResult.scenarioResults });
+              // Mark each scenario individually using scenarioResults
+              if (testResult.scenarioResults && test.children.size > 0) {
+                for (const [, child] of Array.from(test.children)) {
+                  // Mark parent nodes (scenario outlines) as started first
+                  if (child.children.size > 0) {
+                    run.started(child);
+                    this.updateTestStatus(child.id, "started");
+                  }
+                  
+                  // Only mark leaf nodes (scenarios/examples), not parent outline nodes
+                  if (child.children.size === 0) {
+                    // Try to extract feature line number from child.id
+                    let relativeFeaturePath = "";
+                    let featureLineNumber = "1";
+                    let childLine = "";
+                    const idMatch = child.id.match(/^(.*):(\d+):(\d+)$/);
+                    if (idMatch) {
+                      relativeFeaturePath = idMatch[1] ?? "";
+                      featureLineNumber = idMatch[2] ?? "1";
+                      childLine = idMatch[3] ?? "";
+                    } else {
+                      // fallback to previous logic
+                      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+                      relativeFeaturePath = path.relative(workspaceRoot, test.uri.fsPath);
+                      if (test.range) {
+                        featureLineNumber = String(test.range.start.line + 1);
+                      }
+                      childLine = String(this.extractLineNumberFromTestId(child.id));
+                    }
+                    const childKey = `${relativeFeaturePath}:${featureLineNumber}:${childLine}`;
+                    Logger.getInstance().info("Scenario result lookup debug (flat)", {
+                      childId: child.id,
+                      childKey,
+                      availableKeys: Object.keys(testResult.scenarioResults ?? {}),
+                      parentLabel: test.label,
+                      parentRange: test.range,
+                      relativeFeaturePath,
+                      featureLineNumber,
+                      childLine
+                    });
+                    const status = testResult.scenarioResults?.[childKey];
+                    Logger.getInstance().info("Scenario status lookup result", {
+                      childId: child.id,
+                      childKey,
+                      status,
+                      hasStatus: status !== undefined
+                    });
+                    if (status === "passed") {
+                      // Store the status with the correct cache key (childKey from scenarioResults)
+                      this.testStatusCache.set(childKey, "passed");
+                      // Also store with the child ID for backward compatibility
+                      this.updateTestStatus(child.id, "passed");
+                      
+                      // Then try to update the VS Code UI
+                      try {
+                        run.passed(child);
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.passed", { childId: child.id, error: String(error) });
+                        // Continue processing other scenarios even if this one fails
+                      }
+                    } else if (status === "failed") {
+                      // Store the status with the correct cache key (childKey from scenarioResults)
+                      this.testStatusCache.set(childKey, "failed");
+                      // Also store with the child ID for backward compatibility
+                      this.updateTestStatus(child.id, "failed");
+                      
+                      // Then try to update the VS Code UI
+                      try {
+                        run.failed(child, new vscode.TestMessage("Test failed"));
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.failed", { childId: child.id, error: String(error) });
+                        // Continue processing other scenarios even if this one fails
+                      }
+                    } else {
+                      Logger.getInstance().warn("No scenario result found for child, marking as skipped", { childId: child.id, childKey });
+                      try {
+                      run.skipped(child);
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.skipped", { childId: child.id, error: String(error) });
+                      }
+                    }
+                  } else {
+                    // Parent node (e.g., scenario outline): process children and aggregate
+                    let anyFailed = false;
+                    let allPassed = true;
+                    
+                    // Process scenario outline examples
+                    for (const [, grandChild] of Array.from(child.children)) {
+                      // Process the scenario outline example
+                      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+                      const relativeFeaturePath = path.relative(workspaceRoot, test.uri.fsPath);
+                      const featureLineNumber = test.range ? String(test.range.start.line + 1) : "1";
+                      const childLine = String(this.extractLineNumberFromTestId(grandChild.id));
+                      const childKey = `${relativeFeaturePath}:${featureLineNumber}:${childLine}`;
+                      
+                      const status = testResult.scenarioResults?.[childKey];
+                      if (status === "passed") {
+                        // Store the status with the correct cache key
+                        this.testStatusCache.set(childKey, "passed");
+                        this.updateTestStatus(grandChild.id, "passed");
+                        try {
+                          run.passed(grandChild);
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.passed for outline example", { childId: grandChild.id, error: String(error) });
+                        }
+                      } else if (status === "failed") {
+                        // Store the status with the correct cache key
+                        this.testStatusCache.set(childKey, "failed");
+                        this.updateTestStatus(grandChild.id, "failed");
+                        try {
+                          run.failed(grandChild, new vscode.TestMessage("Test failed"));
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.failed for outline example", { childId: grandChild.id, error: String(error) });
+                        }
+                        anyFailed = true;
+                        allPassed = false;
+                      } else {
+                        try {
+                          run.skipped(grandChild);
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.skipped for outline example", { childId: grandChild.id, error: String(error) });
+                        }
+                        allPassed = false;
+                      }
+                    }
+                    
+                    // Update parent status
+                    if (anyFailed) {
+                        // Always update the status cache first, regardless of VS Code API success
+                      this.updateTestStatus(child.id, "failed");
+                        
+                        // Then try to update the VS Code UI
+                        try {
+                          run.failed(child, new vscode.TestMessage("One or more examples failed"));
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.failed for parent", { childId: child.id, error: String(error) });
+                        }
+                    } else if (allPassed) {
+                        // Always update the status cache first, regardless of VS Code API success
+                      this.updateTestStatus(child.id, "passed");
+                        
+                        // Then try to update the VS Code UI
+                        try {
+                          run.passed(child);
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.passed for parent", { childId: child.id, error: String(error) });
+                        }
+                    } else {
+                        try {
+                      run.skipped(child);
+                        } catch (error) {
+                          Logger.getInstance().error("Error calling run.skipped for parent", { childId: child.id, error: String(error) });
+                        }
+                    }
+                  }
+                }
+              } else {
+                Logger.getInstance().warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
+                // Fallback: mark all children based on overall result
+                this.markAllChildrenBasedOnResult(test, run, testResult);
+              }
+              
+              // Explicitly update all scenario outline parents after processing all scenarios
+              Logger.getInstance().info("Explicitly updating all scenario outline parents", { testId: test.id });
+              for (const [, child] of Array.from(test.children)) {
+                if (child.children.size > 0) {
+                  // This is a scenario outline parent
+                  Logger.getInstance().info("Updating scenario outline parent", { parentId: child.id, parentLabel: child.label });
+                  this.updateScenarioOutlineParentStatus(child.id);
+                }
+              }
             } else if (test.id.includes(":outline:")) {
               // Scenario outline node: run all examples by outline name
               const filePath = test.uri.fsPath;
@@ -848,6 +1139,109 @@ export class BehaveTestProvider {
                 filePath,
                 scenarioName: outlineName ?? "",
               });
+              Logger.getInstance().info("ScenarioResults mapping for outline", { scenarioResults: testResult.scenarioResults });
+              // Mark each example individually using scenarioResults
+              if (testResult.scenarioResults && test.children.size > 0) {
+                for (const [, child] of Array.from(test.children)) {
+                  // Mark parent nodes (scenario outlines) as started first
+                  if (child.children.size > 0) {
+                    run.started(child);
+                    this.updateTestStatus(child.id, "started");
+                  }
+                  
+                  if (child.children.size === 0) {
+                    const childLine = this.extractLineNumberFromTestId(child.id);
+                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+                    const relativeFeaturePath = path.relative(workspaceRoot, filePath);
+                    // Extract feature line number from parent feature test item (test.parent)
+                    let featureLineNumber: number | undefined = undefined;
+                    if (test.parent?.range) {
+                      featureLineNumber = test.parent.range.start.line + 1;
+                    }
+                    const childKey = featureLineNumber
+                      ? `${relativeFeaturePath}:${featureLineNumber}:${childLine}`
+                      : `${relativeFeaturePath}:${childLine}`;
+                    Logger.getInstance().info("Scenario result lookup debug (outline)", {
+                      childId: child.id,
+                      childKey,
+                      availableKeys: Object.keys(testResult.scenarioResults ?? {}),
+                      parentLabel: test.label,
+                      parentRange: test.range,
+                      relativeFeaturePath,
+                      featureLineNumber,
+                      childLine
+                    });
+                    const status = testResult.scenarioResults?.[childKey];
+                    if (status === "passed") {
+                      // Store the status with the correct cache key (childKey from scenarioResults)
+                      this.testStatusCache.set(childKey, "passed");
+                      // Also store with the child ID for backward compatibility
+                      this.updateTestStatus(child.id, "passed");
+                      
+                      // Then try to update the VS Code UI
+                      try {
+                        run.passed(child);
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.passed for outline", { childId: child.id, error: String(error) });
+                      }
+                    } else if (status === "failed") {
+                      // Store the status with the correct cache key (childKey from scenarioResults)
+                      this.testStatusCache.set(childKey, "failed");
+                      // Also store with the child ID for backward compatibility
+                      this.updateTestStatus(child.id, "failed");
+                      
+                      // Then try to update the VS Code UI
+                      try {
+                        run.failed(child, new vscode.TestMessage("Test failed"));
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.failed for outline", { childId: child.id, error: String(error) });
+                      }
+                    } else {
+                      Logger.getInstance().warn("No scenario result found for child, marking as skipped", { childId: child.id, childKey });
+                      try {
+                      run.skipped(child);
+                      } catch (error) {
+                        Logger.getInstance().error("Error calling run.skipped for outline", { childId: child.id, error: String(error) });
+                      }
+                    }
+                  } else {
+                    // Parent node (should not happen for outline children, but handle just in case)
+                    let anyFailed = false;
+                    let allPassed = true;
+                    Logger.getInstance().info("Checking children for parent status", {
+                      parentId: child.id,
+                      childCount: child.children.size,
+                      childIds: Array.from(child.children).map(child => child[0])
+                    });
+                    for (const [, grandChild] of Array.from(child.children)) {
+                      const status = this.testStatusCache.get(grandChild.id);
+                      Logger.getInstance().info("Child status check", {
+                        childId: grandChild.id,
+                        status,
+                        hasStatus: status !== undefined
+                      });
+                      if (status === "failed") {
+                        anyFailed = true;
+                        allPassed = false;
+                      } else if (status !== "passed") {
+                        allPassed = false;
+                      }
+                    }
+                    if (anyFailed) {
+                      run.failed(child, new vscode.TestMessage("One or more examples failed"));
+                      this.updateTestStatus(child.id, "failed");
+                    } else if (allPassed) {
+                      run.passed(child);
+                      this.updateTestStatus(child.id, "passed");
+                    } else {
+                      run.skipped(child);
+                    }
+                  }
+                }
+              } else {
+                Logger.getInstance().warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
+                this.markAllChildrenBasedOnResult(test, run, testResult);
+              }
             } else if (isGroupTest) {
               // Run all scenarios in the group
               Logger.getInstance().info(
@@ -862,9 +1256,47 @@ export class BehaveTestProvider {
               testResult = await this.testExecutor.runFeatureFileWithOutput({
                 filePath: test.uri.fsPath,
               });
-
-              // Mark all child tests based on the group result
-              this.markAllChildrenBasedOnResult(test, run, testResult);
+              Logger.getInstance().info("ScenarioResults mapping for group", { scenarioResults: testResult.scenarioResults });
+              // Mark each scenario individually using scenarioResults
+              if (testResult.scenarioResults && test.children.size > 0) {
+                for (const [, child] of Array.from(test.children)) {
+                  const childLine = this.extractLineNumberFromTestId(child.id);
+                  const childKey = `${test.uri.fsPath}:${childLine}`;
+                  Logger.getInstance().info("Checking scenario result for child", { childId: child.id, childKey, status: testResult.scenarioResults[childKey] });
+                  const status = testResult.scenarioResults[childKey];
+                  if (status === "passed") {
+                    // Always update the status cache first, regardless of VS Code API success
+                    this.updateTestStatus(child.id, "passed");
+                    
+                    // Then try to update the VS Code UI
+                    try {
+                      run.passed(child);
+                    } catch (error) {
+                      Logger.getInstance().error("Error calling run.passed for group", { childId: child.id, error: String(error) });
+                    }
+                  } else if (status === "failed") {
+                    // Always update the status cache first, regardless of VS Code API success
+                    this.updateTestStatus(child.id, "failed");
+                    
+                    // Then try to update the VS Code UI
+                    try {
+                      run.failed(child, new vscode.TestMessage("Test failed"));
+                    } catch (error) {
+                      Logger.getInstance().error("Error calling run.failed for group", { childId: child.id, error: String(error) });
+                    }
+                  } else {
+                    Logger.getInstance().warn("No scenario result found for child, marking as skipped", { childId: child.id, childKey });
+                    try {
+                    run.skipped(child);
+                    } catch (error) {
+                      Logger.getInstance().error("Error calling run.skipped for group", { childId: child.id, error: String(error) });
+                    }
+                  }
+                }
+              } else {
+                Logger.getInstance().warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
+                this.markAllChildrenBasedOnResult(test, run, testResult);
+              }
             } else {
               // Run a specific scenario
               Logger.getInstance().info(
@@ -901,46 +1333,71 @@ export class BehaveTestProvider {
                   scenarioOptions
                 );
               }
-            }
 
-            // Mark test based on actual result
-            if (testResult.success) {
-            run.passed(test);
-            this.updateTestStatus(test.id, "passed");
-
-              // Log success with output summary
-              Logger.getInstance().info(`Test passed: ${test.label}`, {
-                testId: test.id,
-                duration: testResult.duration,
-                outputLength: testResult.output.length,
-              });
-            } else {
-              // Create test message with error details
-              const errorMessage =
-                testResult.error ?? "Test failed with no error details";
-              const testMessage = new vscode.TestMessage(
-                `Test failed: ${errorMessage}`
-              );
-
-              // Add output to the test message if available
-              if (testResult.output) {
-                const fullMessage = `Test failed: ${errorMessage}\n\nOutput:\n${testResult.output}`;
-                run.failed(test, new vscode.TestMessage(fullMessage));
-              } else {
-                run.failed(test, testMessage);
+              // Mark this scenario based on scenarioResults if available
+              // Use robust mapping logic for individual scenarios
+              const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+              
+              // For scenario outline examples, store all example results in the cache
+              if (isScenarioOutlineExample && testResult.scenarioResults) {
+                Logger.getInstance().info("Processing scenario outline example results", {
+                  testId: test.id,
+                  availableKeys: Object.keys(testResult.scenarioResults)
+                });
+                
+                // Store all example results using the same format as feature file execution
+                for (const [childKey, status] of Object.entries(testResult.scenarioResults)) {
+                  Logger.getInstance().info("Storing scenario outline example result", {
+                    childKey,
+                    status,
+                    testId: test.id
+                  });
+                  
+                  // Store with the childKey format for parent status updates
+                  this.testStatusCache.set(childKey, status as "passed" | "failed");
+                  
+                  // Also store with the child ID for backward compatibility
+                  // Extract the line number from childKey (e.g., "features/advanced-example.feature:2:39" -> ":39")
+                  const lineMatch = childKey.match(/:(\d+)$/);
+                  if (lineMatch) {
+                    const childLine = lineMatch[1];
+                    const childId = `:${childLine}`;
+                    this.updateTestStatus(childId, status as "passed" | "failed");
+                  }
+                }
               }
-
-              run.failed(test, testMessage);
-              this.updateTestStatus(test.id, "failed");
-
-              // Log failure with details
-              Logger.getInstance().error(`Test failed: ${test.label}`, {
-                testId: test.id,
-                error: errorMessage,
-                output: testResult.output,
-                duration: testResult.duration,
+              
+              const foundStatus = getScenarioStatusForTestItem(
+                { id: test.id, uri: test.uri },
+                test.parent?.uri
+                  ? { id: test.parent.id, uri: test.parent.uri }
+                  : { id: test.parent?.id ?? "" },
+                testResult.scenarioResults ?? {},
+                workspaceRoot
+              );
+              Logger.getInstance().info("Mapping debug (individual)", {
+                childId: test.id,
+                foundStatus,
+                availableKeys: Object.keys(testResult.scenarioResults ?? {})
               });
+              if (foundStatus === "passed") {
+                run.passed(test);
+                this.updateTestStatus(test.id, "passed");
+              } else if (foundStatus === "failed") {
+                run.failed(test, new vscode.TestMessage("Test failed"));
+                this.updateTestStatus(test.id, "failed");
+              } else {
+                run.skipped(test);
+              }
             }
+
+            // Log success/failure with output summary
+            Logger.getInstance().info(`Test result: ${test.label}`, {
+              testId: test.id,
+              duration: testResult.duration,
+              outputLength: testResult.output.length,
+              scenarioResults: testResult.scenarioResults,
+            });
           } catch (error) {
             const errorMessage =
               error instanceof Error ? error.message : String(error);
@@ -960,12 +1417,51 @@ export class BehaveTestProvider {
             // Update status cache
             this.updateTestStatus(test.id, "failed");
           }
-        } else if (this.isGroupTest(test.id)) {
-          // Handle tag groups (no URI) - run all scenarios in the group
+        } else if (this.isGroupTest(test.id) && test.id.startsWith('tag:')) {
+          // In runTests, for tag group (tag-based organization) test execution:
+          // Instead of collecting feature files and running each, run Behave once with the tag expression
           Logger.getInstance().info(
             `Running all scenarios in tag group: ${test.label}`
           );
-
+          // Extract tag from test.id (e.g., tag:@smoke)
+          const tagMatch = test.id.match(/^tag:(.+)$/);
+          const tag = tagMatch?.[1] ?? test.label ?? "";
+          // Run Behave with --tags="<tag>"
+          await this.testExecutor.runAllTestsWithTags(tag);
+          const testResult = await this.testExecutor.runAllTestsWithTagsOutput(tag);
+          Logger.getInstance().info("ScenarioResults mapping for tag group", { scenarioResults: testResult.scenarioResults });
+          // Log all scenario keys parsed
+          Logger.getInstance().info("Parsed scenario result keys for tag group", { keys: Object.keys(testResult.scenarioResults ?? {}) });
+          // Log which test item IDs were matched or not
+          for (const [, child] of Array.from(test.children)) {
+            const status = testResult.scenarioResults?.[child.id];
+            Logger.getInstance().info("Tag group child result mapping", { childId: child.id, label: child.label, status, matched: status !== undefined });
+            if (status === "passed") {
+              run.passed(child);
+              this.updateTestStatus(child.id, "passed");
+            } else if (status === "failed") {
+              run.failed(child, new vscode.TestMessage("Test failed"));
+              this.updateTestStatus(child.id, "failed");
+            } else {
+              run.skipped(child);
+            }
+          }
+          // Mark the group test based on whether all children passed
+          const allPassed = Object.values(testResult.scenarioResults ?? {}).every(s => s === "passed");
+          if (allPassed) {
+            run.passed(test);
+            this.updateTestStatus(test.id, "passed");
+          } else {
+            run.failed(test, new vscode.TestMessage("One or more scenarios failed"));
+            this.updateTestStatus(test.id, "failed");
+          }
+          return;
+        }
+        // For flat, file, and scenario type organizations, aggregate results across all relevant feature files before marking children
+        else if (this.isGroupTest(test.id)) {
+          Logger.getInstance().info(
+            `Running all scenarios in group: ${test.label}`
+          );
           // Collect all feature files from the group's children
           const featureFiles = new Set<string>();
           const collectFeatureFiles = (testItem: vscode.TestItem) => {
@@ -975,39 +1471,101 @@ export class BehaveTestProvider {
             testItem.children.forEach(collectFeatureFiles);
           };
           collectFeatureFiles(test);
-
-          // Run all feature files that contain scenarios in this tag group
-          let allPassed = true;
-          const results: import("../types").TestRunResult[] = [];
-
+          // Aggregate scenario results from all feature files
+          const aggregatedScenarioResults: Record<string, string> = {};
           for (const filePath of featureFiles) {
-            // First, run the feature file in the terminal to show output to user
-            await this.testExecutor.runFeatureFile({
-              filePath,
+            await this.testExecutor.runFeatureFile({ filePath });
+            const result = await this.testExecutor.runFeatureFileWithOutput({ filePath });
+            Object.assign(aggregatedScenarioResults, result.scenarioResults);
+          }
+          Logger.getInstance().info("Parsed scenario result keys for group", { keys: Object.keys(aggregatedScenarioResults) });
+          // Mark all child tests based on aggregated results
+          const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+          for (const [, child] of Array.from(test.children)) {
+            // Debug logging to see what test items are being processed
+            Logger.getInstance().info("Processing test item", {
+              childId: child.id,
+              childLabel: child.label,
+              childChildrenCount: child.children.size,
+              isScenarioOutlineParent: this.isScenarioOutlineParent(child),
+              organizationStrategy: this.getOrganizationStrategy().strategyType
             });
-
-            const result = await this.testExecutor.runFeatureFileWithOutput({
-              filePath,
-            });
-            results.push(result);
-            if (!result.success) {
-              allPassed = false;
+            
+            // Check if this child is a scenario outline parent
+            if (this.isScenarioOutlineParent(child)) {
+              Logger.getInstance().info("Processing scenario outline parent", {
+                parentId: child.id,
+                parentLabel: child.label,
+                childCount: child.children.size
+              });
+              
+              // For scenario outline parents, aggregate children's statuses
+              let anyFailed = false;
+              let allPassed = true;
+              
+              for (const [, grandChild] of Array.from(child.children)) {
+                const grandChildStatus = getScenarioStatusForTestItem(
+                  grandChild as { id: string; uri?: vscode.Uri },
+                  child as { id: string; uri?: vscode.Uri },
+                  aggregatedScenarioResults,
+                  workspaceRoot
+                );
+                
+                if (grandChildStatus === "failed") {
+                  anyFailed = true;
+                  allPassed = false;
+                } else if (grandChildStatus !== "passed") {
+                  allPassed = false;
+                }
+              }
+              
+              // Set parent status based on aggregation
+              if (anyFailed) {
+                Logger.getInstance().info("Setting scenario outline parent status: FAILED", { testId: child.id, label: child.label });
+                run.failed(child, new vscode.TestMessage("One or more examples failed"));
+                this.updateTestStatus(child.id, "failed");
+              } else if (allPassed) {
+                Logger.getInstance().info("Setting scenario outline parent status: PASSED", { testId: child.id, label: child.label });
+                run.passed(child);
+                this.updateTestStatus(child.id, "passed");
+              } else {
+                Logger.getInstance().info("Setting scenario outline parent status: SKIPPED", { testId: child.id, label: child.label });
+                run.skipped(child);
+              }
+              continue; // Skip the regular mapping logic for scenario outline parents
+            }
+            
+            // Use shared mapping logic
+            const foundStatus = getScenarioStatusForTestItem(
+              child as { id: string; uri?: vscode.Uri },
+              test as { id: string; uri?: vscode.Uri },
+              aggregatedScenarioResults,
+              workspaceRoot
+            );
+            Logger.getInstance().info("Mapping debug", { childId: child.id, foundStatus, availableKeys: Object.keys(aggregatedScenarioResults) });
+            if (foundStatus === "passed") {
+              Logger.getInstance().info("Setting test explorer status: PASSED", { testId: child.id, label: child.label });
+              run.passed(child);
+            } else if (foundStatus === "failed") {
+              Logger.getInstance().info("Setting test explorer status: FAILED", { testId: child.id, label: child.label });
+              run.failed(child, new Error("Scenario failed"));
+            } else {
+              Logger.getInstance().info("Setting test explorer status: SKIPPED", { testId: child.id, label: child.label });
+              run.skipped(child);
             }
           }
-
-          // Mark all child tests based on combined results
-          this.markAllChildrenBasedOnCombinedResults(test, run, results);
-
-          // Mark the group test based on whether all feature files passed
+          // Mark the group test based on whether all children passed
+          const allPassed = Object.values(aggregatedScenarioResults).every(s => s === "passed");
           if (allPassed) {
+            Logger.getInstance().info("Setting test explorer status: PASSED (group)", { testId: test.id, label: test.label });
           run.passed(test);
           this.updateTestStatus(test.id, "passed");
           } else {
-            const failedResults = results.filter((r) => !r.success);
-            const errorMessage = `Group test failed: ${failedResults.length} feature files failed`;
-            run.failed(test, new vscode.TestMessage(errorMessage));
+            Logger.getInstance().info("Setting test explorer status: FAILED (group)", { testId: test.id, label: test.label });
+            run.failed(test, new vscode.TestMessage("One or more scenarios failed"));
             this.updateTestStatus(test.id, "failed");
           }
+          return;
         }
       }
     } catch (error) {
@@ -1022,6 +1580,7 @@ export class BehaveTestProvider {
       }
     } finally {
       run.end();
+      this.isTestRunning = false;
     }
   }
 
@@ -1030,6 +1589,11 @@ export class BehaveTestProvider {
    * @param request - Test run request
    */
   private async debugTests(request: vscode.TestRunRequest): Promise<void> {
+    if (this.isTestRunning) {
+      vscode.window.showWarningMessage("A test run is already in progress. Please wait for it to finish before starting another.");
+      return;
+    }
+    this.isTestRunning = true;
     try {
       for (const test of request.include ?? []) {
         try {
@@ -1123,159 +1687,9 @@ export class BehaveTestProvider {
       vscode.window.showErrorMessage(
         `Failed to start debug session: ${errorMessage}`
       );
-    }
-  }
-
-  /**
-   * Mark all child tests based on combined results of multiple tests
-   * @param parentTest - The parent test item
-   * @param run - The test run instance
-   * @param results - Array of results from each test execution
-   */
-  private markAllChildrenBasedOnCombinedResults(
-    parentTest: vscode.TestItem,
-    run: vscode.TestRun,
-    results: import("../types").TestRunResult[]
-  ): void {
-    const markChildrenRecursively = (test: vscode.TestItem) => {
-      test.children.forEach((child) => {
-        run.started(child);
-
-        // For combined results, we'll mark all children based on whether any test failed
-        const anyFailed = results.some((r) => !r.success);
-
-        if (!anyFailed) {
-          run.passed(child);
-          this.updateTestStatus(child.id, "passed");
-        } else {
-          const failedResults = results.filter((r) => !r.success);
-          const errorMessage = `Group test failed: ${failedResults.length} tests failed`;
-          run.failed(child, new vscode.TestMessage(errorMessage));
-          this.updateTestStatus(child.id, "failed");
-        }
-
-        markChildrenRecursively(child);
-      });
-    };
-
-    markChildrenRecursively(parentTest);
-  }
-
-  /**
-   * Run tests in parallel based on the test run request
-   * @param request - Test run request
-   */
-  private async runTestsInParallel(
-    request: vscode.TestRunRequest
-  ): Promise<void> {
-    const run = this.testController.createTestRun(request);
-
-    try {
-      // Collect all feature files from selected tests
-      const featureFiles = new Set<string>();
-      for (const test of request.include ?? []) {
-        if (test.uri) {
-          featureFiles.add(test.uri.fsPath);
-        }
-      }
-
-      if (featureFiles.size === 0) {
-        return;
-      }
-
-      // Mark all tests as started and their children
-      for (const test of request.include ?? []) {
-        run.started(test);
-
-        // Update status cache to track that this test has been started
-        this.updateTestStatus(test.id, "started");
-
-        this.markAllChildrenAsStarted(test, run);
-      }
-
-      // Run all feature files in parallel
-      const featureFilesArray = Array.from(featureFiles);
-
-      // For parallel execution, we'll use the existing parallel runner but capture results
-      // This is a simplified approach - in a full implementation, we'd need to modify the parallel runner
-      // to return results for each file
-      const results: import("../types").TestRunResult[] = [];
-
-      for (const filePath of featureFilesArray) {
-        try {
-          // First, run the feature file in the terminal to show output to user
-          await this.testExecutor.runFeatureFile({
-            filePath,
-          });
-
-          const result = await this.testExecutor.runFeatureFileWithOutput({
-            filePath,
-          });
-          results.push(result);
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          results.push({
-            success: false,
-            output: "",
-            error: errorMessage,
-            duration: 0,
-          });
-        }
-      }
-
-      // Mark all tests based on results
-      const allPassed = results.every((r) => r.success);
-
-      for (const test of request.include ?? []) {
-        if (allPassed) {
-        run.passed(test);
-          this.updateTestStatus(test.id, "passed");
-        } else {
-          const failedResults = results.filter((r) => !r.success);
-          const errorMessage = `Parallel test execution failed: ${failedResults.length} feature files failed`;
-          run.failed(test, new vscode.TestMessage(errorMessage));
-          this.updateTestStatus(test.id, "failed");
-        }
-      }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      Logger.getInstance().error(
-        `Error running tests in parallel: ${errorMessage}`
-      );
-
-      for (const test of request.include ?? []) {
-        run.failed(
-          test,
-          new vscode.TestMessage(
-            `Parallel test execution failed: ${errorMessage}`
-          )
-        );
-      }
     } finally {
-      run.end();
+      this.isTestRunning = false;
     }
-  }
-
-  /**
-   * Mark all child tests as started when running a parent test
-   * @param parentTest - The parent test item
-   * @param run - The test run instance
-   */
-  private markAllChildrenAsStarted(
-    parentTest: vscode.TestItem,
-    run: vscode.TestRun
-  ): void {
-    const markChildrenRecursively = (test: vscode.TestItem) => {
-      test.children.forEach((child) => {
-        run.started(child);
-        this.updateTestStatus(child.id, "started");
-        markChildrenRecursively(child);
-      });
-    };
-
-    markChildrenRecursively(parentTest);
   }
 
   /**
@@ -1397,8 +1811,9 @@ export class BehaveTestProvider {
    * @returns True if it's a group, false otherwise.
    */
   private isGroupTest(testId: string): boolean {
-    // A group test ID contains special identifiers that indicate it's a group
+    // Recognize any testId that starts with 'group:' as a group test (including scenario type groups)
     return (
+      testId.startsWith("group:") ||
       testId.includes(":group:") ||
       testId.includes(":all") ||
       testId.includes(":tag:") ||
@@ -1440,8 +1855,7 @@ export class BehaveTestProvider {
         for (const scenario of group.scenarios) {
           const scenarioItem = this.createScenarioTestItem(
             vscode.Uri.file(scenario.filePath),
-            scenario,
-            `${scenario.filePath}:${scenario.lineNumber}`
+            scenario
           );
           groupItem.children.add(scenarioItem);
         }
@@ -1485,8 +1899,7 @@ export class BehaveTestProvider {
         for (const scenario of group.scenarios) {
           const scenarioItem = this.createScenarioTestItem(
             vscode.Uri.file(scenario.filePath),
-            scenario,
-            `${scenario.filePath}:${scenario.lineNumber}`
+            scenario
           );
           groupItem.children.add(scenarioItem);
         }
@@ -1549,6 +1962,187 @@ export class BehaveTestProvider {
   }
 
   /**
+   * Update the status of a scenario outline parent based on its children's statuses
+   * @param parentId - The test item ID of the scenario outline parent
+   */
+  private updateScenarioOutlineParentStatus(parentId: string): void {
+    Logger.getInstance().info("Attempting to update scenario outline parent status", { parentId });
+    
+    const parent = this.findTestItemById(parentId);
+    if (!parent) {
+      Logger.getInstance().warn("Could not find scenario outline parent", { parentId });
+      return;
+    }
+
+    Logger.getInstance().info("Found scenario outline parent", {
+      parentId,
+      parentLabel: parent.label,
+      childCount: parent.children.size
+    });
+
+    // Aggregate statuses of all children
+    let anyFailed = false;
+    let allPassed = true;
+    let anyStarted = false;
+
+    Logger.getInstance().info("Checking children for parent status", {
+      parentId: parent.id,
+      childCount: parent.children.size,
+      childIds: Array.from(parent.children).map(([id]) => id)
+    });
+
+    // Extract feature path from parent ID for constructing cache keys
+    const parentMatch = parentId.match(/(.*\.feature):outline:(.+)$/);
+    if (!parentMatch) {
+      Logger.getInstance().warn("Could not parse parent ID format", { parentId });
+      return;
+    }
+    
+    const fullFeaturePath = parentMatch[1];
+    // Extract the feature filename (advanced-example.feature)
+    const featureFilename = fullFeaturePath?.split('/').pop() ?? "";
+    
+    Logger.getInstance().info("Constructing cache keys for children", {
+      featureFilename,
+      parentId,
+      cacheKeys: Array.from(this.testStatusCache.keys()),
+      cacheSize: this.testStatusCache.size
+    });
+
+    for (const [, child] of Array.from(parent.children)) {
+      // Find the cache key that matches this child by looking for the child line number
+      const childLine = child.id.startsWith(":") ? child.id.slice(1) : child.id;
+      let cacheKey = "";
+      
+      // BREAKPOINT: Cache key matching logic
+      Logger.getInstance().info("BREAKPOINT: Starting cache key search", {
+        childId: child.id,
+        childLine,
+        featureFilename,
+        totalCacheKeys: this.testStatusCache.size,
+        allCacheKeys: Array.from(this.testStatusCache.keys())
+      });
+      
+      // Find the actual cache key that contains this child line number
+      for (const [key] of this.testStatusCache) {
+        // Look for cache keys that contain the feature filename and the child line number
+        // The cache key format is: features/advanced-example.feature:2:39
+        // We need to match both the feature filename and the child line number
+        const includesFeature = key.includes(featureFilename);
+        const includesChildLine = key.includes(`:${childLine}`);
+        const matches = includesFeature && includesChildLine;
+        
+        Logger.getInstance().info("BREAKPOINT: Cache key check", {
+          key,
+          featureFilename,
+          childLine,
+          includesFeature,
+          includesChildLine,
+          matches,
+          willBreak: matches
+        });
+        
+        if (matches) {
+          cacheKey = key;
+          Logger.getInstance().info("BREAKPOINT: Found matching cache key", {
+            childId: child.id,
+            cacheKey,
+            key
+          });
+          break;
+        }
+      }
+      
+      if (!cacheKey) {
+        Logger.getInstance().warn("BREAKPOINT: No matching cache key found", {
+          childId: child.id,
+          childLine,
+          featureFilename,
+          searchedKeys: Array.from(this.testStatusCache.keys())
+        });
+      }
+      
+      const childStatus = this.testStatusCache.get(cacheKey);
+      Logger.getInstance().info("Child status check", {
+        childId: child.id,
+        childLabel: child.label,
+        cacheKey,
+        childStatus,
+        hasStatus: childStatus !== undefined
+      });
+      if (childStatus === "failed") {
+        anyFailed = true;
+        allPassed = false;
+      } else if (childStatus === "started") {
+        anyStarted = true;
+        allPassed = false;
+      } else if (childStatus !== "passed") {
+        allPassed = false;
+      }
+    }
+
+    // Set parent status based on aggregation
+    let parentStatus: "started" | "passed" | "failed";
+    if (anyFailed) {
+      parentStatus = "failed";
+    } else if (allPassed) {
+      parentStatus = "passed";
+    } else if (anyStarted) {
+      parentStatus = "started";
+    } else {
+      parentStatus = "failed"; // Default to failed if no children have status
+    }
+
+    this.testStatusCache.set(parentId, parentStatus);
+    Logger.getInstance().info("Updated scenario outline parent status", {
+      parentId,
+      parentLabel: parent.label,
+      parentStatus,
+      childCount: parent.children.size,
+      anyFailed,
+      allPassed,
+      anyStarted
+    });
+  }
+
+  /**
+   * Find a test item by its ID
+   * @param testId - The test item ID to find
+   * @returns The test item if found, undefined otherwise
+   */
+  private findTestItemById(testId: string): vscode.TestItem | undefined {
+    // Search in discovered tests first
+    for (const [, testItem] of this.discoveredTests) {
+      const found = this.findTestItemRecursively(testItem, testId);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Recursively search for a test item by ID
+   * @param testItem - The test item to search in
+   * @param targetId - The target test item ID
+   * @returns The test item if found, undefined otherwise
+   */
+  private findTestItemRecursively(testItem: vscode.TestItem, targetId: string): vscode.TestItem | undefined {
+    if (testItem.id === targetId) {
+      return testItem;
+    }
+    
+    for (const [, child] of Array.from(testItem.children)) {
+      const found = this.findTestItemRecursively(child, targetId);
+      if (found) {
+        return found;
+      }
+    }
+    
+    return undefined;
+  }
+
+  /**
    * Dispose of the test provider
    */
   public dispose(): void {
@@ -1597,5 +2191,38 @@ export class BehaveTestProvider {
         });
         return strategyType;
     }
+  }
+
+  /**
+   * Check if a test item is a scenario outline parent
+   * @param testItem - The test item to check
+   * @returns True if it's a scenario outline parent, false otherwise
+   */
+  private isScenarioOutlineParent(testItem: vscode.TestItem): boolean {
+    // A scenario outline parent:
+    // 1. Has children (examples)
+    // 2. Label starts with "Scenario Outline:"
+    // 3. Children are scenario outline examples
+    return (
+      testItem.children.size > 0 &&
+      testItem.label.startsWith("Scenario Outline:") &&
+      Array.from(testItem.children).every(([, child]) => 
+        this.isScenarioOutlineExample(child.label)
+      )
+    );
+  }
+
+  /**
+   * Extract the feature file path from a test ID.
+   * This is useful for checking if a parent and child belong to the same feature file.
+   * @param testId - The test item ID.
+   * @returns The feature file path or undefined if not a feature file.
+   */
+  private extractFeatureFileFromTestId(testId: string): string | undefined {
+    const parts = testId.split(":");
+    if (parts.length >= 2) {
+      return parts[0];
+    }
+    return undefined;
   }
 }

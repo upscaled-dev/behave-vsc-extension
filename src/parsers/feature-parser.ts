@@ -38,7 +38,8 @@ export class FeatureParser {
         return null;
       }
 
-      const scenarios = this.extractScenarios(lines);
+      // Pass featureLineNumber to extractScenarios
+      const scenarios = this.extractScenarios(lines, featureInfo.lineNumber);
 
       return {
         feature: featureInfo.name,
@@ -81,7 +82,7 @@ export class FeatureParser {
    * @param lines - Feature file lines
    * @returns Array of scenarios
    */
-  private static extractScenarios(lines: string[]): Scenario[] {
+  private static extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
     const scenarios: Scenario[] = [];
     const scenarioOutlines: Array<{
       scenario: Scenario;
@@ -146,6 +147,7 @@ export class FeatureParser {
           tags: currentScenarioTags,
           filePath: "", // Will be set by caller
           isScenarioOutline: false,
+          featureLineNumber, // Add featureLineNumber
         };
         inExamplesSection = false;
         isCurrentScenarioOutline = false;
@@ -189,6 +191,7 @@ export class FeatureParser {
           tags: currentScenarioTags,
           filePath: "", // Will be set by caller
           isScenarioOutline: true,
+          featureLineNumber, // Add featureLineNumber
         };
         // Store the outline line number for later use
         outlineLineNumber = lineNumber;
@@ -312,6 +315,7 @@ export class FeatureParser {
               filePath: "", // Will be set by caller
               isScenarioOutline: true,
               outlineLineNumber: outline.outlineLineNumber, // Store the parent outline line number
+              featureLineNumber, // Add featureLineNumber
             };
 
             finalScenarios.push(exampleScenario);

@@ -23,6 +23,7 @@ export interface Scenario {
   filePath: string;
   isScenarioOutline: boolean;
   outlineLineNumber?: number; // Line number of the parent scenario outline (for examples)
+  featureLineNumber?: number; // Line number of the Feature: keyword
 }
 
 /**
