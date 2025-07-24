@@ -1433,8 +1433,14 @@ export class BehaveTestProvider {
           // Log all scenario keys parsed
           Logger.getInstance().info("Parsed scenario result keys for tag group", { keys: Object.keys(testResult.scenarioResults ?? {}) });
           // Log which test item IDs were matched or not
+          const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
           for (const [, child] of Array.from(test.children)) {
-            const status = testResult.scenarioResults?.[child.id];
+            const status = getScenarioStatusForTestItem(
+              child as { id: string; uri?: vscode.Uri },
+              test as { id: string; uri?: vscode.Uri },
+              testResult.scenarioResults ?? {},
+              workspaceRoot
+            );
             Logger.getInstance().info("Tag group child result mapping", { childId: child.id, label: child.label, status, matched: status !== undefined });
             if (status === "passed") {
               run.passed(child);
@@ -1814,6 +1820,7 @@ export class BehaveTestProvider {
     // Recognize any testId that starts with 'group:' as a group test (including scenario type groups)
     return (
       testId.startsWith("group:") ||
+      testId.startsWith("tag:") ||
       testId.includes(":group:") ||
       testId.includes(":all") ||
       testId.includes(":tag:") ||
@@ -1838,7 +1845,7 @@ export class BehaveTestProvider {
     for (const group of organizedGroups) {
       if (group.scenarios.length > 0) {
         const groupItem = this.testController.createTestItem(
-          `tag:${group.id}`,
+          group.id,
           group.label,
           undefined // No URI for tag groups
         );

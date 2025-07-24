@@ -17,7 +17,7 @@ Feature: Multiple Scenario Outlines Test
       | user     | user123  | dashboard       |
       | invalid  | wrong    | error message   |
 
-  @api @data-validation
+  @api @datavalidation
   Scenario Outline: API data validation with various input types
     Given I have a valid API endpoint
     When I send "<data_type>" data with value "<input_value>"
