@@ -4,6 +4,12 @@ import { BehaveTestProvider } from "./test-providers/behave-test-provider";
 import { CommandManager } from "./commands/command-manager";
 import { ExtensionConfig } from "./core/extension-config";
 import { FeatureParser } from "./parsers/feature-parser";
+import { BehaveExtensionContext } from "./types";
+import { TestExecutor } from "./core/test-executor";
+import { TestDiscoveryManager } from "./core/test-discovery-manager";
+import { TestOrganizationManager } from "./core/test-organization";
+import { BehaveJsonParser } from "./utils/behave-json-parser";
+import { TestItemMapping } from "./utils/test-item-mapping";
 
 let testProvider: BehaveTestProvider | undefined;
 let commandManager: CommandManager | undefined;
@@ -14,8 +20,21 @@ let testController: vscode.TestController | undefined;
  * Activate the extension
  */
 export function activate(context: vscode.ExtensionContext): void {
-  const logger = Logger.getInstance();
-  const config = ExtensionConfig.getInstance();
+  const logger = Logger.create();
+  const config = ExtensionConfig.create();
+  const featureParser = FeatureParser.create(logger);
+  
+  // Create shared context for dependency injection
+  const sharedContext: BehaveExtensionContext = {
+    logger,
+    config,
+    testExecutor: TestExecutor.create(),
+    discoveryManager: TestDiscoveryManager.create(),
+    organizationManager: TestOrganizationManager.create(),
+    featureParser,
+    behaveJsonParser: BehaveJsonParser.create(logger),
+    testItemMapping: TestItemMapping.create()
+  };
 
   // Note: VS Code doesn't provide direct access to existing test controllers
   // We'll rely on the unique ID approach to avoid conflicts
@@ -81,7 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
 
         context.subscriptions.push(testController);
-        testProvider = new BehaveTestProvider(testController);
+        testProvider = BehaveTestProvider.create(testController, sharedContext);
         context.subscriptions.push(testProvider);
 
         logger.info("Test provider created and registered");
@@ -119,7 +138,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // Register commands using the centralized command manager
-    commandManager = CommandManager.getInstance();
+    commandManager = CommandManager.create(sharedContext);
     commandManager.registerCommands(context);
     context.subscriptions.push(commandManager);
 
@@ -139,7 +158,7 @@ export function activate(context: vscode.ExtensionContext): void {
           provideCodeLenses: (
             document: vscode.TextDocument
           ): vscode.CodeLens[] => {
-            const codeLenses = FeatureParser.provideScenarioCodeLenses(
+            const codeLenses = featureParser.provideScenarioCodeLenses(
               document.getText(),
               document.uri.fsPath
             );
@@ -170,7 +189,7 @@ export function activate(context: vscode.ExtensionContext): void {
  * Extension deactivation function
  */
 export function deactivate(): void {
-  const logger = Logger.getInstance();
+  const logger = Logger.create();
   logger.info("👋 Behave Test Runner extension is deactivating");
 
   // Clean up resources

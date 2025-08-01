@@ -2,6 +2,7 @@ import * as assert from "assert";
 import { FeatureParser } from "../parsers/feature-parser.js";
 
 suite("Parser Test Suite", () => {
+  const featureParser = FeatureParser.create();
   test("Should parse valid feature file", () => {
     const featureContent = `
 Feature: Calculator
@@ -22,7 +23,7 @@ Feature: Calculator
     Then the result should be -30 on the screen
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Calculator");
@@ -49,7 +50,7 @@ Feature: Calculator
       | 5 | 5 | 10     |
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Calculator");
@@ -88,7 +89,7 @@ Feature: Calculator
     When something happens
     Then something else should happen`;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result, "Should parse feature content");
     assert.strictEqual(
@@ -145,7 +146,7 @@ Feature: Calculator
     When I run it
     Then it should work`;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result, "Should parse feature content");
     assert.strictEqual(result.scenarios.length, 1, "Should have 1 scenario");
@@ -163,7 +164,7 @@ Some random content here
 No Feature: line found
 `;
 
-    const result = FeatureParser.parseFeatureContent(invalidContent);
+    const result = featureParser.parseFeatureContent(invalidContent);
     assert.strictEqual(result, null);
   });
 
@@ -186,7 +187,7 @@ Feature: Calculator
       | 1 | 1      |
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -217,25 +218,25 @@ Feature: Calculator
 
   test("Should validate feature file extensions", () => {
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.feature"),
+      featureParser.isValidFeatureFile("/path/to/test.feature"),
       true
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.FEATURE"),
+      featureParser.isValidFeatureFile("/path/to/test.FEATURE"),
       true
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.txt"),
+      featureParser.isValidFeatureFile("/path/to/test.txt"),
       false
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test"),
+      featureParser.isValidFeatureFile("/path/to/test"),
       false
     );
   });
 
   test("Should handle empty feature content", () => {
-    const result = FeatureParser.parseFeatureContent("");
+    const result = featureParser.parseFeatureContent("");
     assert.strictEqual(result, null);
   });
 
@@ -245,7 +246,7 @@ Feature: Empty Feature
   This feature has no scenarios
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Empty Feature");

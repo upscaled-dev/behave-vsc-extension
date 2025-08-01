@@ -8,8 +8,27 @@ export class PythonDetector {
   private static instance: PythonDetector;
   private cachedCommand: string | null = null;
 
-  private constructor() {}
+  /**
+   * Constructor for PythonDetector with optional dependencies for testability
+   * @param initialCachedCommand - Optional initial cached command (for testing)
+   */
+  constructor(initialCachedCommand?: string | null) {
+    this.cachedCommand = initialCachedCommand ?? null;
+  }
 
+  /**
+   * Create a new PythonDetector instance with optional dependencies for testability
+   * @param initialCachedCommand - Optional initial cached command (for testing)
+   * @returns A new PythonDetector instance
+   */
+  public static create(initialCachedCommand?: string | null): PythonDetector {
+    return new PythonDetector(initialCachedCommand);
+  }
+
+  /**
+   * Get the singleton instance of the Python detector
+   * @deprecated Use PythonDetector.create() for new code or inject PythonDetector via context
+   */
   public static getInstance(): PythonDetector {
     if (!PythonDetector.instance) {
       PythonDetector.instance = new PythonDetector();
@@ -127,5 +146,13 @@ export class PythonDetector {
    */
   public clearCache(): void {
     this.cachedCommand = null;
+  }
+
+  /**
+   * Get the current cached command (useful for testing)
+   * @returns The currently cached command or null
+   */
+  public getCachedCommand(): string | null {
+    return this.cachedCommand;
   }
 } 

@@ -8,17 +8,26 @@ import { Logger } from "../utils/logger";
  * Parser for Gherkin feature files
  */
 export class FeatureParser {
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.create();
+  }
+
+  public static create(logger?: Logger): FeatureParser {
+    return new FeatureParser(logger);
+  }
   /**
    * Parse a feature file and extract scenarios
    * @param filePath - Path to the feature file
    * @returns Parsed feature data
    */
-  public static parseFeatureFile(filePath: string): ParsedFeature | null {
+  public parseFeatureFile(filePath: string): ParsedFeature | null {
     try {
       const content = fs.readFileSync(filePath, "utf-8");
       return this.parseFeatureContent(content);
     } catch (error) {
-      Logger.getInstance().error("Error parsing feature file:", { error });
+      this.logger.error("Error parsing feature file:", { error });
       return null;
     }
   }
@@ -28,7 +37,7 @@ export class FeatureParser {
    * @param content - Feature file content
    * @returns Parsed feature data with line number information
    */
-  public static parseFeatureContent(content: string): ParsedFeature | null {
+  public parseFeatureContent(content: string): ParsedFeature | null {
     try {
       const lines = content.split("\n");
       const featureInfo = this.extractFeatureInfo(lines);
@@ -48,7 +57,7 @@ export class FeatureParser {
         featureLineNumber: featureInfo.lineNumber,
       };
     } catch (error) {
-      Logger.getInstance().error("Error parsing feature content:", { error });
+      this.logger.error("Error parsing feature content:", { error });
       return null;
     }
   }
@@ -58,7 +67,7 @@ export class FeatureParser {
    * @param lines - Feature file lines
    * @returns Feature info with name and line number
    */
-  private static extractFeatureInfo(lines: string[]): {
+  private extractFeatureInfo(lines: string[]): {
     name: string;
     lineNumber: number;
   } {
@@ -82,7 +91,7 @@ export class FeatureParser {
    * @param lines - Feature file lines
    * @returns Array of scenarios
    */
-  private static extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
+  private extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
     const scenarios: Scenario[] = [];
     const scenarioOutlines: Array<{
       scenario: Scenario;
@@ -133,7 +142,7 @@ export class FeatureParser {
 
         // Validate scenario name
         if (!scenarioName) {
-          Logger.getInstance().warn(
+          this.logger.warn(
             `Warning: Empty scenario name found at line ${lineNumber} in feature file`
           );
         }
@@ -177,7 +186,7 @@ export class FeatureParser {
 
         // Validate scenario outline name
         if (!scenarioName) {
-          Logger.getInstance().warn(
+          this.logger.warn(
             `Warning: Empty scenario outline name found at line ${lineNumber} in feature file`
           );
         }
@@ -335,7 +344,7 @@ export class FeatureParser {
    * @param content - Feature file content
    * @returns Array of unique tags
    */
-  private static extractTags(content: string): string[] {
+  private extractTags(content: string): string[] {
     const tags = new Set<string>();
     const lines = content.split("\n");
 
@@ -359,7 +368,7 @@ export class FeatureParser {
    * @param scenarioLineNumber - 1-based line number of the scenario
    * @returns Range object spanning the scenario
    */
-  private static getScenarioRange(
+  private getScenarioRange(
     lines: string[],
     scenarioLineNumber: number
   ): vscode.Range {
@@ -389,7 +398,7 @@ export class FeatureParser {
    * @param filePath - Path to the feature file
    * @returns Array of CodeLens
    */
-  public static provideScenarioCodeLenses(
+  public provideScenarioCodeLenses(
     content: string,
     filePath: string
   ): vscode.CodeLens[] {
@@ -535,7 +544,7 @@ export class FeatureParser {
    * @param filePath - Path to check
    * @returns True if it's a feature file
    */
-  public static isValidFeatureFile(filePath: string): boolean {
+  public isValidFeatureFile(filePath: string): boolean {
     return path.extname(filePath).toLowerCase() === ".feature";
   }
 
@@ -545,7 +554,7 @@ export class FeatureParser {
    * @param depth - Current recursion depth (internal use)
    * @returns Array of feature file paths
    */
-  public static getFeatureFiles(directory: string, depth = 0): string[] {
+  public getFeatureFiles(directory: string, depth = 0): string[] {
     // Prevent infinite recursion
     const MAX_DEPTH = 10;
     if (depth > MAX_DEPTH) {

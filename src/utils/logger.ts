@@ -19,13 +19,29 @@ export class Logger {
   private outputChannel: vscode.OutputChannel;
   private logLevel: LogLevel = LogLevel.INFO;
 
-  private constructor() {
-    this.outputChannel =
-      vscode.window.createOutputChannel("Behave Test Runner");
+  /**
+   * Constructor for Logger with optional dependencies for testability
+   * @param outputChannel - Optional output channel (for testing)
+   * @param initialLogLevel - Optional initial log level (for testing)
+   */
+  constructor(outputChannel?: vscode.OutputChannel, initialLogLevel?: LogLevel) {
+    this.outputChannel = outputChannel ?? vscode.window.createOutputChannel("Behave Test Runner");
+    this.logLevel = initialLogLevel ?? LogLevel.INFO;
+  }
+
+  /**
+   * Create a new Logger instance with optional dependencies for testability
+   * @param outputChannel - Optional output channel (for testing)
+   * @param initialLogLevel - Optional initial log level (for testing)
+   * @returns A new Logger instance
+   */
+  public static create(outputChannel?: vscode.OutputChannel, initialLogLevel?: LogLevel): Logger {
+    return new Logger(outputChannel, initialLogLevel);
   }
 
   /**
    * Get the singleton instance of the logger
+   * @deprecated Use Logger.create() for new code or inject Logger via context
    */
   public static getInstance(): Logger {
     if (!Logger.instance) {
@@ -40,6 +56,14 @@ export class Logger {
    */
   public setLogLevel(level: LogLevel): void {
     this.logLevel = level;
+  }
+
+  /**
+   * Get the current log level
+   * @returns Current log level
+   */
+  public getLogLevel(): LogLevel {
+    return this.logLevel;
   }
 
   /**
@@ -95,11 +119,6 @@ export class Logger {
   private log(level: string, message: string, data?: LogData): void {
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] [${level}] ${message}`;
-
-    // Log to console
-
-    if (data) {
-    }
 
     // Log to output channel
     this.outputChannel.appendLine(logMessage);

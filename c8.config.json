@@ -1,0 +1,36 @@
+{
+  "branches": 95,
+  "functions": 95,
+  "lines": 95,
+  "statements": 95,
+  "include": [
+    "src/**/*.ts",
+    "out/**/*.js"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.test.js",
+    "**/*.spec.js",
+    "test/**",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/scripts/**",
+    "**/docs/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/*.d.ts",
+    "**/out/test/**"
+  ],
+  "reporter": [
+    "text",
+    "text-summary",
+    "html",
+    "lcov"
+  ],
+  "checkCoverage": true,
+  "all": true,
+  "sourceMap": true,
+  "tempDirectory": ".nyc_output"
+} 

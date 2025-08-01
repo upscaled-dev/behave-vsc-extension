@@ -339,8 +339,6 @@ The extension includes comprehensive tests:
 - **Parser Tests**: Test Gherkin parsing
 - **Execution Tests**: Test test execution
 
-**Current Test Status**: 111 tests passing, 1 failing (33 lint warnings in source files only)
-
 Run tests with:
 
 ```bash

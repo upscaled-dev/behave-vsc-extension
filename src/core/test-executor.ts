@@ -9,27 +9,45 @@ import {
 } from "../types/index";
 import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "./extension-config";
-import { parseBehaveJsonOutput } from "../utils/behave-json-parser";
+import { BehaveJsonParser } from "../utils/behave-json-parser";
 
 /**
  * Handles execution of Behave tests
  */
 export class TestExecutor {
   private config: ExtensionConfig;
+  private logger: Logger;
   private workspace: typeof vscode.workspace;
   private window: typeof vscode.window;
   private debug: typeof vscode.debug;
   private terminal: vscode.Terminal | undefined;
+  private behaveJsonParser: BehaveJsonParser;
+
+  public static create(
+    workspace?: typeof vscode.workspace,
+    window?: typeof vscode.window,
+    debug?: typeof vscode.debug,
+    config?: ExtensionConfig,
+    logger?: Logger,
+    behaveJsonParser?: BehaveJsonParser
+  ): TestExecutor {
+    return new TestExecutor(workspace, window, debug, config, logger, behaveJsonParser);
+  }
 
   constructor(
     workspace: typeof vscode.workspace = vscode.workspace,
     window: typeof vscode.window = vscode.window,
-    debug: typeof vscode.debug = vscode.debug
+    debug: typeof vscode.debug = vscode.debug,
+    config?: ExtensionConfig,
+    logger?: Logger,
+    behaveJsonParser?: BehaveJsonParser
   ) {
     this.workspace = workspace;
     this.window = window;
     this.debug = debug;
-    this.config = ExtensionConfig.getInstance();
+    this.config = config ?? ExtensionConfig.create();
+    this.logger = logger ?? Logger.create();
+    this.behaveJsonParser = behaveJsonParser ?? BehaveJsonParser.create(logger);
   }
 
   /**
@@ -194,7 +212,7 @@ export class TestExecutor {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error(
+      this.logger.error(
         `Failed to start debug session: ${errorMessage}`,
         {
           filePath: options.filePath,
@@ -424,11 +442,11 @@ if __name__ == "__main__":
 
       this.terminal.sendText(command);
 
-      Logger.getInstance().info(`Executed command: ${command}`, { workingDir });
+      this.logger.info(`Executed command: ${command}`, { workingDir });
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error(`Failed to execute command: ${errorMessage}`, {
+      this.logger.error(`Failed to execute command: ${errorMessage}`, {
         command,
         workingDir,
       });
@@ -475,7 +493,7 @@ if __name__ == "__main__":
         const executable = commandParts[0];
         const args = commandParts.slice(1);
 
-        Logger.getInstance().info(
+        this.logger.info(
           `Executing command with output capture: ${command}`,
           { workingDir }
         );
@@ -501,7 +519,7 @@ if __name__ == "__main__":
           const returnCode = code ?? 1;
           const success = returnCode === 0;
 
-          Logger.getInstance().info(
+          this.logger.info(
             `Command completed with return code: ${returnCode}`,
             {
               command,
@@ -520,7 +538,7 @@ if __name__ == "__main__":
         });
 
         childProcess.on("error", (error: Error) => {
-          Logger.getInstance().error(
+          this.logger.error(
             `Command execution error: ${error.message}`,
             {
               command,
@@ -538,7 +556,7 @@ if __name__ == "__main__":
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error occurred";
-        Logger.getInstance().error(
+        this.logger.error(
           `Failed to execute command with output: ${errorMessage}`,
           {
             command,
@@ -613,7 +631,7 @@ if __name__ == "__main__":
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
-      Logger.getInstance().info("Preparing to run scenario with output", {
+      this.logger.info("Preparing to run scenario with output", {
         filePath,
         lineNumber,
         scenarioName,
@@ -659,11 +677,11 @@ if __name__ == "__main__":
         command += " --dry-run";
       }
 
-      Logger.getInstance().info("Executing Behave command", { command, workingDir });
+      this.logger.info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
 
-      Logger.getInstance().info("Behave command executed", {
+      this.logger.info("Behave command executed", {
         command,
         returnCode: result.returnCode,
         stdoutLength: result.output.length,
@@ -673,16 +691,16 @@ if __name__ == "__main__":
 
       const scenarioResults: Record<string, string> = {};
       try {
-        Logger.getInstance().info("Parsing Behave JSON output");
-        const parsed = parseBehaveJsonOutput(result.output);
+        this.logger.info("Parsing Behave JSON output");
+        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
         for (const s of parsed) {
           if (s.filePath && s.lineNumber) {
             scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
           }
         }
-        Logger.getInstance().info("Parsed scenario results", { scenarioResults });
+        this.logger.info("Parsed scenario results", { scenarioResults });
       } catch {
-        Logger.getInstance().error("Failed to parse Behave JSON output", { output: result.output });
+        this.logger.error("Failed to parse Behave JSON output", { output: result.output });
         // If parsing fails, fallback to overall result
       }
 
@@ -697,7 +715,7 @@ if __name__ == "__main__":
       const duration = Math.max(1, Date.now() - startTime);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error("runScenarioWithOutput failed", {
+      this.logger.error("runScenarioWithOutput failed", {
         error: errorMessage,
         filePath,
         lineNumber,
@@ -728,7 +746,7 @@ if __name__ == "__main__":
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
-      Logger.getInstance().info("Preparing to run feature file with output", {
+      this.logger.info("Preparing to run feature file with output", {
         filePath: options.filePath,
         tags: options.tags,
         dryRun: options.dryRun,
@@ -749,11 +767,11 @@ if __name__ == "__main__":
         command += " --dry-run";
       }
 
-      Logger.getInstance().info("Executing Behave command", { command, workingDir });
+      this.logger.info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
 
-      Logger.getInstance().info("Behave command executed", {
+      this.logger.info("Behave command executed", {
         command,
         returnCode: result.returnCode,
         stdoutLength: result.output.length,
@@ -763,16 +781,16 @@ if __name__ == "__main__":
 
       const scenarioResults: Record<string, string> = {};
       try {
-        Logger.getInstance().info("Parsing Behave JSON output");
-        const parsed = parseBehaveJsonOutput(result.output);
+        this.logger.info("Parsing Behave JSON output");
+        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
         for (const s of parsed) {
           if (s.filePath && s.lineNumber) {
             scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
           }
         }
-        Logger.getInstance().info("Parsed scenario results", { scenarioResults });
+        this.logger.info("Parsed scenario results", { scenarioResults });
       } catch {
-        Logger.getInstance().error("Failed to parse Behave JSON output", { output: result.output });
+        this.logger.error("Failed to parse Behave JSON output", { output: result.output });
         // If parsing fails, fallback to overall result
       }
 
@@ -787,7 +805,7 @@ if __name__ == "__main__":
       const duration = Math.max(1, Date.now() - startTime);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error("runFeatureFileWithOutput failed", {
+      this.logger.error("runFeatureFileWithOutput failed", {
         error: errorMessage,
         filePath: options.filePath,
         tags: options.tags,
@@ -826,7 +844,7 @@ if __name__ == "__main__":
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error(
+      this.logger.error(
         `Failed to discover feature files: ${errorMessage}`,
         {
           pattern: this.config.testFilePattern,
@@ -857,7 +875,7 @@ if __name__ == "__main__":
         return;
       }
 
-      Logger.getInstance().info(
+      this.logger.info(
         `Starting parallel execution of ${featureFiles.length} feature files`,
         {
           maxProcesses: this.config.maxParallelProcesses,
@@ -876,7 +894,7 @@ if __name__ == "__main__":
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
-      Logger.getInstance().error(
+      this.logger.error(
         `Failed to run tests in parallel: ${errorMessage}`
       );
 
@@ -954,7 +972,7 @@ if __name__ == "__main__":
       const duration = Math.max(1, Date.now() - startTime);
       const scenarioResults: Record<string, string> = {};
       try {
-        const parsed = parseBehaveJsonOutput(result.output);
+        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
         for (const s of parsed) {
           if (s.filePath && s.lineNumber) {
             scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;

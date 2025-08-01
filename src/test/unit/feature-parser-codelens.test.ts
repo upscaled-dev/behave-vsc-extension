@@ -2,6 +2,7 @@ import * as assert from "assert";
 import { FeatureParser } from "../../parsers/feature-parser";
 
 suite("Feature Parser CodeLens Unit Tests", () => {
+  const featureParser = FeatureParser.create();
   test("Should generate CodeLenses for scenario outlines with examples", () => {
     const featureContent = `
 Feature: Calculator
@@ -26,7 +27,7 @@ Feature: Calculator
     Then something else should happen
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -105,7 +106,7 @@ Feature: Calculator
       | 5 | 5      |
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -151,7 +152,7 @@ Feature: API Testing
       | empty     |             | invalid           | 400         |
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -214,7 +215,7 @@ Feature: Calculator
     Then something else should happen
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -264,7 +265,7 @@ Feature: Multiple Outlines
       | val4   | val5   | val6   |
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );

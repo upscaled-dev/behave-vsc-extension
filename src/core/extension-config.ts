@@ -9,14 +9,45 @@ export class ExtensionConfig {
   private static instance: ExtensionConfig | undefined;
   private config: vscode.WorkspaceConfiguration;
   private changeListeners: ConfigurationChangeListener[] = [];
+  private pythonDetector: PythonDetector;
 
-  private constructor() {
-    this.config = vscode.workspace.getConfiguration("behaveTestRunner");
-    this.setupConfigurationChangeListener();
+  /**
+   * Constructor for ExtensionConfig with optional dependencies for testability
+   * @param workspaceConfig - Optional workspace configuration (for testing)
+   * @param pythonDetector - Optional Python detector (for testing)
+   * @param setupChangeListener - Whether to setup configuration change listener (default: true)
+   */
+  constructor(
+    workspaceConfig?: vscode.WorkspaceConfiguration,
+    pythonDetector?: PythonDetector,
+    setupChangeListener = true
+  ) {
+    this.config = workspaceConfig ?? vscode.workspace.getConfiguration("behaveTestRunner");
+    this.pythonDetector = pythonDetector ?? PythonDetector.getInstance();
+    
+    if (setupChangeListener) {
+      this.setupConfigurationChangeListener();
+    }
+  }
+
+  /**
+   * Create a new ExtensionConfig instance with optional dependencies for testability
+   * @param workspaceConfig - Optional workspace configuration (for testing)
+   * @param pythonDetector - Optional Python detector (for testing)
+   * @param setupChangeListener - Whether to setup configuration change listener (default: true)
+   * @returns A new ExtensionConfig instance
+   */
+  public static create(
+    workspaceConfig?: vscode.WorkspaceConfiguration,
+    pythonDetector?: PythonDetector,
+    setupChangeListener = true
+  ): ExtensionConfig {
+    return new ExtensionConfig(workspaceConfig, pythonDetector, setupChangeListener);
   }
 
   /**
    * Get the singleton instance of the configuration
+   * @deprecated Use ExtensionConfig.create() for new code or inject ExtensionConfig via context
    */
   public static getInstance(): ExtensionConfig {
     ExtensionConfig.instance ??= new ExtensionConfig();
@@ -80,8 +111,7 @@ export class ExtensionConfig {
     }
 
     // Otherwise, auto-detect the best command
-    const pythonDetector = PythonDetector.getInstance();
-    return pythonDetector.getBestBehaveCommand();
+    return this.pythonDetector.getBestBehaveCommand();
   }
 
   /**

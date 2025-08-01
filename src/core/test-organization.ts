@@ -2,7 +2,15 @@ import { Scenario, TestGroup, TestOrganizationStrategy } from "../types";
 import { Logger } from "../utils/logger";
 
 export class TagBasedOrganization implements TestOrganizationStrategy {
-  private logger = Logger.getInstance();
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.getInstance();
+  }
+
+  public static create(logger?: Logger): TagBasedOrganization {
+    return new TagBasedOrganization(logger);
+  }
 
   // Add a strategy type identifier that won't be minified
   public readonly strategyType = "TagBasedOrganization";
@@ -137,7 +145,15 @@ export class TagBasedOrganization implements TestOrganizationStrategy {
 }
 
 export class FileBasedOrganization implements TestOrganizationStrategy {
-  private logger = Logger.getInstance();
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.getInstance();
+  }
+
+  public static create(logger?: Logger): FileBasedOrganization {
+    return new FileBasedOrganization(logger);
+  }
 
   // Add a strategy type identifier that won't be minified
   public readonly strategyType = "FileBasedOrganization";
@@ -209,7 +225,15 @@ export class FileBasedOrganization implements TestOrganizationStrategy {
 }
 
 export class ScenarioTypeOrganization implements TestOrganizationStrategy {
-  private logger = Logger.getInstance();
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.getInstance();
+  }
+
+  public static create(logger?: Logger): ScenarioTypeOrganization {
+    return new ScenarioTypeOrganization(logger);
+  }
 
   // Add a strategy type identifier that won't be minified
   public readonly strategyType = "ScenarioTypeOrganization";
@@ -286,7 +310,15 @@ export class ScenarioTypeOrganization implements TestOrganizationStrategy {
 }
 
 export class FlatOrganization implements TestOrganizationStrategy {
-  private logger = Logger.getInstance();
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.getInstance();
+  }
+
+  public static create(logger?: Logger): FlatOrganization {
+    return new FlatOrganization(logger);
+  }
 
   // Add a strategy type identifier that won't be minified
   public readonly strategyType = "FlatOrganization";
@@ -320,7 +352,16 @@ export class FlatOrganization implements TestOrganizationStrategy {
 }
 
 export class FeatureBasedOrganization implements TestOrganizationStrategy {
-  private logger = Logger.getInstance();
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.getInstance();
+  }
+
+  public static create(logger?: Logger): FeatureBasedOrganization {
+    return new FeatureBasedOrganization(logger);
+  }
+
   public readonly strategyType = "FeatureBasedOrganization";
 
   organizeTests(scenarios: Scenario[]): TestGroup[] {
@@ -366,17 +407,26 @@ export class FeatureBasedOrganization implements TestOrganizationStrategy {
 export class TestOrganizationManager {
   private static instance: TestOrganizationManager;
   private currentStrategy: TestOrganizationStrategy;
-  private logger = Logger.getInstance();
+  private logger: Logger;
 
-  private constructor() {
-    this.currentStrategy = new FeatureBasedOrganization();
+  constructor(logger?: Logger, strategy?: TestOrganizationStrategy) {
+    this.logger = logger ?? Logger.getInstance();
+    this.currentStrategy = strategy ?? new FeatureBasedOrganization();
   }
 
+  /**
+   * Get the singleton instance of the test organization manager
+   * @deprecated Use TestOrganizationManager.create() for new code or inject TestOrganizationManager via context
+   */
   public static getInstance(): TestOrganizationManager {
     if (!TestOrganizationManager.instance) {
       TestOrganizationManager.instance = new TestOrganizationManager();
     }
     return TestOrganizationManager.instance;
+  }
+
+  public static create(logger?: Logger, strategy?: TestOrganizationStrategy): TestOrganizationManager {
+    return new TestOrganizationManager(logger, strategy);
   }
 
   public setStrategy(strategy: TestOrganizationStrategy): void {
@@ -421,7 +471,7 @@ export class TestOrganizationManager {
       this.logger.debug(
         "Falling back to flat organization due to error in TestOrganizationManager"
       );
-      return new FlatOrganization().organizeTests(scenarios);
+      return FlatOrganization.create(this.logger).organizeTests(scenarios);
     }
   }
 
@@ -435,27 +485,27 @@ export class TestOrganizationManager {
         name: "Feature-based (Hierarchical)",
         description:
           "Hierarchical: Feature file as root, scenarios as children",
-        strategy: new FeatureBasedOrganization(),
+        strategy: FeatureBasedOrganization.create(this.logger),
       },
       {
         name: "Tag-based",
         description: "Group scenarios by their tags",
-        strategy: new TagBasedOrganization(),
+        strategy: TagBasedOrganization.create(this.logger),
       },
       {
         name: "File-based",
         description: "Group scenarios by their file location",
-        strategy: new FileBasedOrganization(),
+        strategy: FileBasedOrganization.create(this.logger),
       },
       {
         name: "Scenario Type",
         description: "Group by regular scenarios vs scenario outlines",
-        strategy: new ScenarioTypeOrganization(),
+        strategy: ScenarioTypeOrganization.create(this.logger),
       },
       {
         name: "Flat",
         description: "No grouping, all scenarios in one list",
-        strategy: new FlatOrganization(),
+        strategy: FlatOrganization.create(this.logger),
       },
     ];
   }

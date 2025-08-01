@@ -7,6 +7,7 @@ import * as fs from "fs";
 import { FeatureParser } from "../parsers/feature-parser";
 
 suite("Behave Test Runner Extension Test Suite", () => {
+  const featureParser = FeatureParser.create();
   vscode.window.showInformationMessage("Start all tests.");
 
   // Test feature file parsing
@@ -36,7 +37,7 @@ suite("Behave Test Runner Extension Test Suite", () => {
 
     try {
       // Test the parsing function (we'll need to export it)
-      const result = FeatureParser.parseFeatureFile(tempFile);
+      const result = featureParser.parseFeatureFile(tempFile);
       assert.strictEqual(result?.feature, "Test Feature");
       assert.strictEqual(result?.scenarios.length, 2);
       assert.strictEqual(result?.scenarios?.[0]?.name, "Simple test scenario");
@@ -120,10 +121,11 @@ suite("Behave Test Runner Extension Test Suite", () => {
 });
 
 suite("CodeLens Provider Test Suite", () => {
+  const featureParser = FeatureParser.create();
   test("Should provide CodeLens for scenarios", () => {
     const featureText = `Feature: Example\n  Scenario: Test\n    Given something\n  Scenario Outline: Outline\n    Given <x>\n`;
     const filePath = "/path/to/file.feature";
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureText,
       filePath
     );

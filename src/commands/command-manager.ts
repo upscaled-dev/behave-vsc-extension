@@ -2,7 +2,12 @@ import * as vscode from "vscode";
 import { TestExecutor } from "../core/test-executor";
 import { ExtensionConfig } from "../core/extension-config";
 import { Logger } from "../utils/logger";
-import { CommandArguments, CommandHandler } from "../types";
+import { TestDiscoveryManager } from "../core/test-discovery-manager";
+import { TestOrganizationManager } from "../core/test-organization";
+import { FeatureParser } from "../parsers/feature-parser";
+import { BehaveJsonParser } from "../utils/behave-json-parser";
+import { TestItemMapping } from "../utils/test-item-mapping";
+import { CommandArguments, CommandHandler, BehaveExtensionContext } from "../types";
 import * as fs from "fs";
 
 // Minimal interfaces for type-safe access to test provider and managers
@@ -42,9 +47,7 @@ export interface CommandOptions {
 export class CommandManager {
   private static instance: CommandManager | undefined;
   private commands: Map<string, vscode.Disposable> = new Map();
-  private testExecutor: TestExecutor;
-  private config: ExtensionConfig;
-  private logger: Logger;
+  private context: BehaveExtensionContext;
   // Change testProvider type to unknown
   private testProvider: unknown;
 
@@ -58,10 +61,34 @@ export class CommandManager {
    */
   private isTestRunning = false;
 
-  private constructor() {
-    this.testExecutor = new TestExecutor();
-    this.config = ExtensionConfig.getInstance();
-    this.logger = Logger.getInstance();
+  public static create(context?: BehaveExtensionContext): CommandManager {
+    return new CommandManager(context);
+  }
+
+  private createDefaultContext(): BehaveExtensionContext {
+    const logger = Logger.create();
+    const config = ExtensionConfig.create();
+    const testExecutor = TestExecutor.create();
+    const discoveryManager = TestDiscoveryManager.create();
+    const organizationManager = TestOrganizationManager.create();
+    const featureParser = FeatureParser.create(logger);
+    const behaveJsonParser = BehaveJsonParser.create(logger);
+    const testItemMapping = TestItemMapping.create();
+
+    return {
+      logger,
+      config,
+      testExecutor,
+      discoveryManager,
+      organizationManager,
+      featureParser,
+      behaveJsonParser,
+      testItemMapping
+    };
+  }
+
+  private constructor(context?: BehaveExtensionContext) {
+    this.context = context ?? this.createDefaultContext();
     this.testItemMap = new Map();
     this.isTestRunning = false;
   }
@@ -82,7 +109,7 @@ export class CommandManager {
     status: "started" | "passed" | "failed" = "passed"
   ): void {
     if (!this.testProvider) {
-      this.logger.debug("Test provider not available, skipping status update");
+      this.context.logger.debug("Test provider not available, skipping status update");
       return;
     }
 
@@ -90,7 +117,7 @@ export class CommandManager {
       // Get the test controller from the test provider
       const testController = (this.testProvider as { testController: vscode.TestController }).testController;
       if (!testController) {
-        this.logger.debug(
+        this.context.logger.debug(
           "Test controller not available, skipping status update"
         );
         return;
@@ -126,13 +153,13 @@ export class CommandManager {
 
       if (testItem) {
         updateStatusRecursive(testItem);
-        this.logger.debug(
+        this.context.logger.debug(
           `Updated test status for ${
             lineNumber ? `${filePath}:${lineNumber}` : filePath
           } to ${status} (including children)`
         );
       } else {
-        this.logger.debug(
+        this.context.logger.debug(
           `Test item not found for ${
             lineNumber ? `${filePath}:${lineNumber}` : filePath
           }`
@@ -141,7 +168,7 @@ export class CommandManager {
         this.logAvailableTestItems(testController);
       }
     } catch (error) {
-      this.logger.error("Failed to update test status", { error });
+      this.context.logger.error("Failed to update test status", { error });
     }
   }
 
@@ -154,7 +181,7 @@ export class CommandManager {
     status: "started" | "passed" | "failed" = "passed"
   ): void {
     if (!this.testProvider) {
-      this.logger.debug("Test provider not available, skipping status update");
+      this.context.logger.debug("Test provider not available, skipping status update");
       return;
     }
 
@@ -162,7 +189,7 @@ export class CommandManager {
       // Get the test controller from the test provider
       const testController = (this.testProvider as { testController: vscode.TestController }).testController;
       if (!testController) {
-        this.logger.debug(
+        this.context.logger.debug(
           "Test controller not available, skipping status update"
         );
         return;
@@ -198,16 +225,16 @@ export class CommandManager {
         }
 
         run.end();
-        this.logger.debug(
+        this.context.logger.debug(
           `Updated test status for ${matchingTestItems.length} test(s) with tags "${tags}" to ${status}`
         );
       } else {
-        this.logger.debug(
+        this.context.logger.debug(
           `No test items found for file ${filePath} with tags "${tags}"`
         );
       }
     } catch (error) {
-      this.logger.error("Failed to update test status for tags", { error });
+      this.context.logger.error("Failed to update test status for tags", { error });
     }
   }
 
@@ -250,7 +277,7 @@ export class CommandManager {
         for (const [, item] of items) {
           const indent = "  ".repeat(depth);
           const lineInfo = item.range?.start.line !== undefined ? (item.range.start.line + 1) : "(unknown)";
-          this.logger.debug(
+          this.context.logger.debug(
             `${indent}- ${item.id} (${item.label}) - Range: ${lineInfo}`
           );
           logItems(item.children, depth + 1);
@@ -258,7 +285,7 @@ export class CommandManager {
       }
     };
 
-    this.logger.debug("Available test items:");
+    this.context.logger.debug("Available test items:");
     logItems(testController.items);
   }
 
@@ -359,7 +386,7 @@ export class CommandManager {
       const lines = content.split("\n");
 
       // Debug logging
-      this.logger.debug(
+      this.context.logger.debug(
         `Checking scenario outline at line ${lineNumber} in ${filePath}`,
         {
           lineNumber,
@@ -381,24 +408,24 @@ export class CommandManager {
 
         // If we have a scenario name, also check if it's not an example
         if (scenarioName && this.isScenarioOutlineExample(scenarioName)) {
-          this.logger.debug(
+          this.context.logger.debug(
             `Scenario name "${scenarioName}" is an example, returning false`
           );
           return false; // It's an example, not the outline itself
         }
 
-        this.logger.debug(`Line ${lineNumber} is outline: ${isOutlineLine}`);
+        this.context.logger.debug(`Line ${lineNumber} is outline: ${isOutlineLine}`);
         return isOutlineLine;
       }
 
-      this.logger.debug(
+      this.context.logger.debug(
         `Line ${lineNumber} is out of range (1-${lines.length})`
       );
       return false;
     } catch (error) {
       // If we can't read the file, fall back to a simple check
       // This is not as reliable but prevents crashes
-      this.logger.warn(
+      this.context.logger.warn(
         `Could not read feature file to determine scenario outline: ${filePath}`,
         {
           error: error instanceof Error ? error.message : "Unknown error",
@@ -421,7 +448,7 @@ export class CommandManager {
    */
   public registerCommands(context: vscode.ExtensionContext): void {
     try {
-      this.logger.info("Registering extension commands...");
+      this.context.logger.info("Registering extension commands...");
 
       // Always clear existing commands first to ensure clean state
       this.clearCommands();
@@ -565,11 +592,11 @@ export class CommandManager {
         this.registerCommand(context, cmdOptions);
       }
 
-      this.logger.info(`Successfully registered ${commands.length} commands`);
+      this.context.logger.info(`Successfully registered ${commands.length} commands`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Failed to register commands: ${errorMessage}`, {
+      this.context.logger.error(`Failed to register commands: ${errorMessage}`, {
         error,
       });
       throw new Error(`Command registration failed: ${errorMessage}`);
@@ -590,17 +617,17 @@ export class CommandManager {
         options.command,
         async (...args: CommandArguments) => {
           try {
-            this.logger.debug(`Executing command: ${options.command}`, {
+            this.context.logger.debug(`Executing command: ${options.command}`, {
               args,
             });
             await options.handler(...args);
-            this.logger.debug(
+            this.context.logger.debug(
               `Command executed successfully: ${options.command}`
             );
           } catch (error) {
             const errorMessage =
               error instanceof Error ? error.message : "Unknown error";
-            this.logger.error(`Command execution failed: ${options.command}`, {
+            this.context.logger.error(`Command execution failed: ${options.command}`, {
               error: errorMessage,
               args,
             });
@@ -614,11 +641,11 @@ export class CommandManager {
       this.commands.set(options.command, disposable);
       context.subscriptions.push(disposable);
 
-      this.logger.debug(`Registered command: ${options.command}`);
+      this.context.logger.debug(`Registered command: ${options.command}`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Failed to register command: ${options.command}`, {
+      this.context.logger.error(`Failed to register command: ${options.command}`, {
         error,
       });
       throw new Error(
@@ -642,7 +669,7 @@ export class CommandManager {
     }
 
     try {
-      this.logger.info(`Running scenario: ${scenarioName ?? "all scenarios"}`, {
+      this.context.logger.info(`Running scenario: ${scenarioName ?? "all scenarios"}`, {
         filePath,
         lineNumber,
         scenarioName,
@@ -660,7 +687,7 @@ export class CommandManager {
 
       if (isScenarioOutlineExample) {
           // For scenario outline examples, run ONLY the specific example (not the whole outline)
-        this.logger.info(
+        this.context.logger.info(
             `Running scenario outline example: ${
               scenarioName ?? "unnamed"
             } at line ${lineNumber}`,
@@ -671,13 +698,13 @@ export class CommandManager {
         );
 
           // Run only the specific example by name
-          await this.testExecutor.runScenario({
+          await this.context.testExecutor.runScenario({
           filePath,
           lineNumber,
             scenarioName: scenarioName ?? "",
           });
 
-          testResult = await this.testExecutor.runScenarioWithOutput({
+          testResult = await this.context.testExecutor.runScenarioWithOutput({
             filePath,
             lineNumber,
             scenarioName: scenarioName ?? "",
@@ -693,7 +720,7 @@ export class CommandManager {
 
         if (isScenarioOutline) {
             // For scenario outlines, run with scenarioName to run all examples in one command
-          this.logger.info(
+          this.context.logger.info(
               `Running scenario outline: ${
                 scenarioName ?? "unnamed"
               } (will run all examples in one command)`,
@@ -703,13 +730,13 @@ export class CommandManager {
           );
 
             // First, run the scenario in the terminal to show output to user
-            await this.testExecutor.runScenario({
+            await this.context.testExecutor.runScenario({
             filePath,
             lineNumber,
               ...(scenarioName !== undefined ? { scenarioName } : {}),
             });
 
-            testResult = await this.testExecutor.runScenarioWithOutput({
+            testResult = await this.context.testExecutor.runScenarioWithOutput({
               filePath,
               lineNumber,
               ...(scenarioName !== undefined ? { scenarioName } : {}),
@@ -717,13 +744,13 @@ export class CommandManager {
         } else {
           // Regular scenario
             // First, run the scenario in the terminal to show output to user
-            await this.testExecutor.runScenario({
+            await this.context.testExecutor.runScenario({
             filePath,
             lineNumber,
               ...(scenarioName ? { scenarioName } : {}),
             });
 
-            testResult = await this.testExecutor.runScenarioWithOutput({
+            testResult = await this.context.testExecutor.runScenarioWithOutput({
               filePath,
               lineNumber,
               ...(scenarioName ? { scenarioName } : {}),
@@ -732,14 +759,14 @@ export class CommandManager {
       }
       } else {
         // No line number specified, run the entire feature file
-        this.logger.info(`Running entire feature file: ${filePath}`);
+        this.context.logger.info(`Running entire feature file: ${filePath}`);
 
         // First, run the feature file in the terminal to show output to user
-        await this.testExecutor.runFeatureFile({
+        await this.context.testExecutor.runFeatureFile({
           filePath,
         });
 
-        testResult = await this.testExecutor.runFeatureFileWithOutput({
+        testResult = await this.context.testExecutor.runFeatureFileWithOutput({
           filePath,
         });
       }
@@ -747,13 +774,13 @@ export class CommandManager {
       // Update test status based on actual result
       if (testResult.success) {
         this.updateTestStatus(filePath, lineNumber, "passed");
-        this.logger.info("Scenario execution completed successfully", {
+        this.context.logger.info("Scenario execution completed successfully", {
           duration: testResult.duration,
           outputLength: testResult.output.length,
         });
       } else {
         this.updateTestStatus(filePath, lineNumber, "failed");
-        this.logger.error("Scenario execution failed", {
+        this.context.logger.error("Scenario execution failed", {
           error: testResult.error,
           output: testResult.output,
           duration: testResult.duration,
@@ -763,7 +790,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run scenario", {
+      this.context.logger.error("Failed to run scenario", {
         error: errorMessage,
         args,
       });
@@ -785,30 +812,30 @@ export class CommandManager {
     }
 
     try {
-      this.logger.info(`Running feature file: ${filePath}`);
+      this.context.logger.info(`Running feature file: ${filePath}`);
 
       // Update test status to started
       this.updateTestStatus(filePath, undefined, "started");
 
       // First, run the feature file in the terminal to show output to user
-      await this.testExecutor.runFeatureFile({
+      await this.context.testExecutor.runFeatureFile({
         filePath,
       });
 
-      const testResult = await this.testExecutor.runFeatureFileWithOutput({
+      const testResult = await this.context.testExecutor.runFeatureFileWithOutput({
         filePath,
       });
 
       // Update test status based on actual result
       if (testResult.success) {
         this.updateTestStatus(filePath, undefined, "passed");
-        this.logger.info("Feature execution completed successfully", {
+        this.context.logger.info("Feature execution completed successfully", {
           duration: testResult.duration,
           outputLength: testResult.output.length,
         });
       } else {
         this.updateTestStatus(filePath, undefined, "failed");
-        this.logger.error("Feature execution failed", {
+        this.context.logger.error("Feature execution failed", {
           error: testResult.error,
           output: testResult.output,
           duration: testResult.duration,
@@ -818,7 +845,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run feature", { error: errorMessage, args });
+      this.context.logger.error("Failed to run feature", { error: errorMessage, args });
 
       // Update test status to failed
       this.updateTestStatus(filePath, undefined, "failed");
@@ -831,15 +858,15 @@ export class CommandManager {
    */
   private async runAllTests(): Promise<void> {
     try {
-      this.logger.info("Running all behave tests");
+      this.context.logger.info("Running all behave tests");
 
-      await this.testExecutor.runAllTests();
+      await this.context.testExecutor.runAllTests();
 
-      this.logger.info("All tests execution started successfully");
+      this.context.logger.info("All tests execution started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run all tests", { error: errorMessage });
+      this.context.logger.error("Failed to run all tests", { error: errorMessage });
       throw error;
     }
   }
@@ -859,7 +886,7 @@ export class CommandManager {
         throw new Error("File path is required");
       }
 
-      this.logger.info(`Debugging scenario: ${scenarioName ?? "unnamed"}`, {
+      this.context.logger.info(`Debugging scenario: ${scenarioName ?? "unnamed"}`, {
         filePath,
         lineNumber,
         scenarioName,
@@ -871,7 +898,7 @@ export class CommandManager {
         const isScenarioOutlineExample = this.isScenarioOutlineExample(scenarioName);
 
         if (isScenarioOutlineExample) {
-          this.logger.info(
+          this.context.logger.info(
             `Debugging scenario outline example: ${scenarioName} at line ${lineNumber}`,
             {
               scenarioName,
@@ -887,7 +914,7 @@ export class CommandManager {
           );
 
           if (isScenarioOutline) {
-            this.logger.info(
+            this.context.logger.info(
               `Debugging scenario outline: ${scenarioName} (will debug all examples in one session)`,
               {
                 scenarioName,
@@ -897,17 +924,17 @@ export class CommandManager {
         }
       }
 
-      await this.testExecutor.debugScenario({
+      await this.context.testExecutor.debugScenario({
         filePath,
         ...(lineNumber !== undefined ? { lineNumber } : {}),
         ...(scenarioName ? { scenarioName } : {}),
       });
 
-      this.logger.info("Scenario debug started successfully");
+      this.context.logger.info("Scenario debug started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to debug scenario", {
+      this.context.logger.error("Failed to debug scenario", {
         error: errorMessage,
         args,
       });
@@ -926,18 +953,18 @@ export class CommandManager {
         throw new Error("File path is required");
       }
 
-      this.logger.info(`Debugging feature file: ${filePath}`);
+      this.context.logger.info(`Debugging feature file: ${filePath}`);
 
       // For now, we'll run the feature file normally since debugFeature doesn't exist
-      await this.testExecutor.runFeatureFile({
+      await this.context.testExecutor.runFeatureFile({
         filePath,
       });
 
-      this.logger.info("Feature debug started successfully");
+      this.context.logger.info("Feature debug started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to debug feature", {
+      this.context.logger.error("Failed to debug feature", {
         error: errorMessage,
         args,
       });
@@ -954,23 +981,23 @@ export class CommandManager {
         throw new Error("Test provider not available");
       }
 
-      this.logger.info("Refreshing tests in Test Explorer");
+      this.context.logger.info("Refreshing tests in Test Explorer");
 
       // Call discoverTests to rebuild the entire test hierarchy with the new organization
       const provider = this.testProvider as TestProviderLike;
       provider.discoverTests?.().catch((error: unknown) => {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        this.logger.error("Failed to refresh tests after organization change", {
+        this.context.logger.error("Failed to refresh tests after organization change", {
           error: errorMessage,
         });
       });
 
-      this.logger.info("Test refresh initiated successfully");
+      this.context.logger.info("Test refresh initiated successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to refresh tests", { error });
+      this.context.logger.error("Failed to refresh tests", { error });
       this.showErrorMessage(`Failed to refresh tests: ${errorMessage}`);
     }
   }
@@ -980,15 +1007,15 @@ export class CommandManager {
    */
   private showOutput(): void {
     try {
-      this.logger.info("Showing output channel");
+      this.context.logger.info("Showing output channel");
 
-      this.logger.showOutput();
+      this.context.logger.showOutput();
 
-      this.logger.info("Output channel displayed");
+      this.context.logger.info("Output channel displayed");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to show output", { error: errorMessage });
+      this.context.logger.error("Failed to show output", { error: errorMessage });
       throw error;
     }
   }
@@ -998,26 +1025,26 @@ export class CommandManager {
    */
   private validateConfiguration(): void {
     try {
-      this.logger.info("Validating configuration");
+      this.context.logger.info("Validating configuration");
 
-      const validationErrors = this.config.getValidationErrors();
+      const validationErrors = this.context.config.getValidationErrors();
 
       if (validationErrors.length > 0) {
         const errorMessage = `Configuration validation failed:\n${validationErrors.join(
           "\n"
         )}`;
-        this.logger.error("Configuration validation failed", {
+        this.context.logger.error("Configuration validation failed", {
           errors: validationErrors,
         });
         this.showErrorMessage(errorMessage);
       } else {
-        this.logger.info("Configuration validation passed");
+        this.context.logger.info("Configuration validation passed");
         vscode.window.showInformationMessage("Configuration is valid");
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to validate configuration", {
+      this.context.logger.error("Failed to validate configuration", {
         error: errorMessage,
       });
       throw error;
@@ -1029,20 +1056,20 @@ export class CommandManager {
    */
   private discoverTests(): void {
     try {
-      this.logger.info("Discovering tests in workspace");
+      this.context.logger.info("Discovering tests in workspace");
 
       // This would typically trigger test discovery in the test provider
       // For now, we'll just log the action
-      this.logger.info("Test discovery requested");
+      this.context.logger.info("Test discovery requested");
 
       // Show a notification to the user
       vscode.window.showInformationMessage("Test discovery started");
 
-      this.logger.info("Test discovery completed");
+      this.context.logger.info("Test discovery completed");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to discover tests", { error: errorMessage });
+      this.context.logger.error("Failed to discover tests", { error: errorMessage });
       throw error;
     }
   }
@@ -1062,7 +1089,7 @@ export class CommandManager {
     }
 
     try {
-      this.logger.info(`Running feature file with tags: ${filePath}`, {
+      this.context.logger.info(`Running feature file with tags: ${filePath}`, {
         filePath,
         tags,
       });
@@ -1071,12 +1098,12 @@ export class CommandManager {
       this.updateTestStatusForTags(filePath, tags, "started");
 
       // First, run the feature file in the terminal to show output to user
-      await this.testExecutor.runFeatureFile({
+      await this.context.testExecutor.runFeatureFile({
         filePath,
         tags,
       });
 
-      const testResult = await this.testExecutor.runFeatureFileWithOutput({
+      const testResult = await this.context.testExecutor.runFeatureFileWithOutput({
         filePath,
         tags,
       });
@@ -1084,13 +1111,13 @@ export class CommandManager {
       // Update test status based on actual result
       if (testResult.success) {
         this.updateTestStatusForTags(filePath, tags, "passed");
-        this.logger.info("Feature execution with tags completed successfully", {
+        this.context.logger.info("Feature execution with tags completed successfully", {
           duration: testResult.duration,
           outputLength: testResult.output.length,
         });
       } else {
         this.updateTestStatusForTags(filePath, tags, "failed");
-        this.logger.error("Feature execution with tags failed", {
+        this.context.logger.error("Feature execution with tags failed", {
           error: testResult.error,
           output: testResult.output,
           duration: testResult.duration,
@@ -1100,7 +1127,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run feature with tags", {
+      this.context.logger.error("Failed to run feature with tags", {
         error: errorMessage,
         args,
       });
@@ -1131,7 +1158,7 @@ export class CommandManager {
         throw new Error("Tags are required");
       }
 
-      this.logger.info(
+      this.context.logger.info(
         `Running scenario with tags: ${scenarioName ?? "unnamed"}`,
         {
           filePath,
@@ -1141,18 +1168,18 @@ export class CommandManager {
         }
       );
 
-      await this.testExecutor.runScenario({
+      await this.context.testExecutor.runScenario({
         filePath,
         lineNumber,
         scenarioName,
         tags,
       });
 
-      this.logger.info("Scenario execution with tags started successfully");
+      this.context.logger.info("Scenario execution with tags started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run scenario with tags", {
+      this.context.logger.error("Failed to run scenario with tags", {
         error: errorMessage,
         args,
       });
@@ -1165,15 +1192,15 @@ export class CommandManager {
    */
   private async runAllTestsParallel(): Promise<void> {
     try {
-      this.logger.info("Running all behave tests in parallel");
+      this.context.logger.info("Running all behave tests in parallel");
 
-      await this.testExecutor.runAllTestsInParallel();
+      await this.context.testExecutor.runAllTestsInParallel();
 
-      this.logger.info("All tests parallel execution started successfully");
+      this.context.logger.info("All tests parallel execution started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run all tests in parallel", {
+      this.context.logger.error("Failed to run all tests in parallel", {
         error: errorMessage,
       });
       throw error;
@@ -1197,7 +1224,7 @@ export class CommandManager {
         throw new Error("File path is required");
       }
 
-      this.logger.info(
+      this.context.logger.info(
         `Running scenario with context: ${scenarioName ?? "unnamed"}`,
         {
           filePath,
@@ -1207,20 +1234,20 @@ export class CommandManager {
       );
 
       // First, run the scenario in the terminal to show output to user
-      await this.testExecutor.runScenario({
+      await this.context.testExecutor.runScenario({
         filePath,
         lineNumber,
         ...(scenarioName ? { scenarioName } : {}),
       });
 
-      const testResult = await this.testExecutor.runScenarioWithOutput({
+      const testResult = await this.context.testExecutor.runScenarioWithOutput({
         filePath,
         lineNumber,
         ...(scenarioName ? { scenarioName } : {}),
       });
 
       if (testResult.success) {
-        this.logger.info(
+        this.context.logger.info(
           "Scenario execution with context completed successfully",
           {
             duration: testResult.duration,
@@ -1228,7 +1255,7 @@ export class CommandManager {
           }
         );
       } else {
-        this.logger.error("Scenario execution with context failed", {
+        this.context.logger.error("Scenario execution with context failed", {
           error: testResult.error,
           output: testResult.output,
           duration: testResult.duration,
@@ -1238,7 +1265,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run scenario with context", {
+      this.context.logger.error("Failed to run scenario with context", {
         error: errorMessage,
         args,
       });
@@ -1263,7 +1290,7 @@ export class CommandManager {
         throw new Error("File path is required");
       }
 
-      this.logger.info(
+      this.context.logger.info(
         `Debugging scenario with context: ${scenarioName ?? "unnamed"}`,
         {
           filePath,
@@ -1272,18 +1299,18 @@ export class CommandManager {
         }
       );
 
-      await this.testExecutor.debugScenario({
+      await this.context.testExecutor.debugScenario({
         filePath,
         lineNumber,
         ...(scenarioName ? { scenarioName } : {}),
         debug: true,
       });
 
-      this.logger.info("Scenario debug with context started successfully");
+      this.context.logger.info("Scenario debug with context started successfully");
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to debug scenario with context", {
+      this.context.logger.error("Failed to debug scenario with context", {
         error: errorMessage,
         args,
       });
@@ -1304,19 +1331,19 @@ export class CommandManager {
         throw new Error("File path is required");
       }
 
-      this.logger.info(`Running feature file with context: ${filePath}`);
+      this.context.logger.info(`Running feature file with context: ${filePath}`);
 
       // First, run the feature file in the terminal to show output to user
-      await this.testExecutor.runFeatureFile({
+      await this.context.testExecutor.runFeatureFile({
         filePath,
       });
 
-      const testResult = await this.testExecutor.runFeatureFileWithOutput({
+      const testResult = await this.context.testExecutor.runFeatureFileWithOutput({
         filePath,
       });
 
       if (testResult.success) {
-        this.logger.info(
+        this.context.logger.info(
           "Feature execution with context completed successfully",
           {
             duration: testResult.duration,
@@ -1324,7 +1351,7 @@ export class CommandManager {
           }
         );
       } else {
-        this.logger.error("Feature execution with context failed", {
+        this.context.logger.error("Feature execution with context failed", {
           error: testResult.error,
           output: testResult.output,
           duration: testResult.duration,
@@ -1334,7 +1361,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to run feature file with context", {
+      this.context.logger.error("Failed to run feature file with context", {
         error: errorMessage,
         args,
       });
@@ -1375,13 +1402,13 @@ export class CommandManager {
         throw new Error(`Command not registered: ${commandId}`);
       }
 
-      this.logger.debug(`Executing command by ID: ${commandId}`, { args });
+      this.context.logger.debug(`Executing command by ID: ${commandId}`, { args });
       await vscode.commands.executeCommand(commandId, ...args);
-      this.logger.debug(`Command executed successfully by ID: ${commandId}`);
+      this.context.logger.debug(`Command executed successfully by ID: ${commandId}`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error(`Failed to execute command by ID: ${commandId}`, {
+      this.context.logger.error(`Failed to execute command by ID: ${commandId}`, {
         error: errorMessage,
         args,
       });
@@ -1394,23 +1421,23 @@ export class CommandManager {
    */
   public dispose(): void {
     try {
-      this.logger.info("Disposing command manager...");
+      this.context.logger.info("Disposing command manager...");
 
       for (const [commandId, disposable] of this.commands) {
         try {
           disposable.dispose();
-          this.logger.debug(`Disposed command: ${commandId}`);
+          this.context.logger.debug(`Disposed command: ${commandId}`);
         } catch (error) {
-          this.logger.error(`Failed to dispose command: ${commandId}`, {
+          this.context.logger.error(`Failed to dispose command: ${commandId}`, {
             error,
           });
         }
       }
 
       this.commands.clear();
-      this.logger.info("Command manager disposed successfully");
+      this.context.logger.info("Command manager disposed successfully");
     } catch (error) {
-      this.logger.error("Failed to dispose command manager", { error });
+      this.context.logger.error("Failed to dispose command manager", { error });
     }
   }
 
@@ -1433,11 +1460,11 @@ export class CommandManager {
    */
   public reset(): void {
     try {
-      this.logger.info("Resetting command manager...");
+      this.context.logger.info("Resetting command manager...");
       this.commands.clear();
-      this.logger.info("Command manager reset successfully");
+      this.context.logger.info("Command manager reset successfully");
     } catch (error) {
-      this.logger.error("Failed to reset command manager", { error });
+      this.context.logger.error("Failed to reset command manager", { error });
     }
   }
 
@@ -1490,7 +1517,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to set organization strategy", { error });
+      this.context.logger.error("Failed to set organization strategy", { error });
       this.showErrorMessage(
         `Failed to set organization strategy: ${errorMessage}`
       );
@@ -1573,7 +1600,7 @@ export class CommandManager {
       if (!strategy) {
         throw new Error(`Strategy not found: ${strategyValue}`);
       }
-      this.logger.info("Changing test organization strategy", {
+      this.context.logger.info("Changing test organization strategy", {
         from: organizationManager.getStrategy().strategyType,
         to: strategy.strategy.strategyType,
       });
@@ -1583,17 +1610,17 @@ export class CommandManager {
       const discoveryManager = provider.discoveryManager;
       if (discoveryManager?.clearCache) {
         discoveryManager.clearCache();
-        this.logger.info("Cleared test discovery cache");
+        this.context.logger.info("Cleared test discovery cache");
       }
       // Wait a moment for the strategy change to take effect
       await new Promise((resolve) => setTimeout(resolve, 100));
       // Refresh tests to apply the new organization - wait for completion
-      this.logger.info("Starting test discovery with new strategy");
+      this.context.logger.info("Starting test discovery with new strategy");
       await provider.discoverTests?.();
       // Wait a moment for the discovery to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
       // Force refresh the Test Explorer view
-      this.logger.info("Forcing Test Explorer refresh");
+      this.context.logger.info("Forcing Test Explorer refresh");
       await provider.forceRefreshTestExplorer?.();
       // Wait a moment for the refresh to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1601,18 +1628,18 @@ export class CommandManager {
       try {
         await vscode.commands.executeCommand("testing.refreshTests");
       } catch (error) {
-        this.logger.debug("Built-in test refresh command not available", {
+        this.context.logger.debug("Built-in test refresh command not available", {
           error,
         });
       }
-      this.logger.info(`Organization strategy changed to: ${strategy.name}`);
+      this.context.logger.info(`Organization strategy changed to: ${strategy.name}`);
       vscode.window.showInformationMessage(
         `Organization strategy changed to: ${strategy.name}`
       );
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to change organization strategy", { error });
+      this.context.logger.error("Failed to change organization strategy", { error });
       this.showErrorMessage(
         `Failed to change organization strategy: ${errorMessage}`
       );
@@ -1634,13 +1661,13 @@ export class CommandManager {
       }
       const currentStrategy = organizationManager.getStrategy();
       const availableStrategies = organizationManager.getAvailableStrategies();
-      this.logger.info("Current Organization Strategy:", {
+      this.context.logger.info("Current Organization Strategy:", {
         name: currentStrategy.strategyType,
         description: currentStrategy.getDescription(),
       });
-      this.logger.info("Available Strategies:");
+      this.context.logger.info("Available Strategies:");
       availableStrategies.forEach((s: { name: string; description: string; strategy: OrganizationStrategy }) => {
-        this.logger.debug(
+        this.context.logger.debug(
           `- ${s.name} (${s.description}) - Strategy: ${s.strategy.strategyType}`
         );
       });
@@ -1650,7 +1677,7 @@ export class CommandManager {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      this.logger.error("Failed to debug organization strategy", { error });
+      this.context.logger.error("Failed to debug organization strategy", { error });
       this.showErrorMessage(
         `Failed to debug organization strategy: ${errorMessage}`
       );
