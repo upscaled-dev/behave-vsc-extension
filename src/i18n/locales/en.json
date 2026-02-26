@@ -1,0 +1,49 @@
+{
+  "codelens": {
+    "runScenario": "▶️ Run Scenario",
+    "runFeature": "▶️ Run Feature",
+    "debugScenario": "🐛 Debug Scenario",
+    "debugFeature": "🐛 Debug Feature"
+  },
+  "commands": {
+    "runAllTests": "Run All Behave Tests",
+    "runCurrentFile": "Run Current Feature File",
+    "runScenario": "Run Scenario",
+    "debugScenario": "Debug Scenario",
+    "selectPythonInterpreter": "Select Python Interpreter",
+    "showOutput": "Show Behave Output"
+  },
+  "messages": {
+    "noFeatureFile": "No feature file is currently open",
+    "noPythonInterpreter": "No Python interpreter selected. Please select one first.",
+    "testRunning": "Running tests...",
+    "testCompleted": "Tests completed",
+    "testFailed": "Tests failed",
+    "parsingError": "Error parsing feature file",
+    "invalidLanguage": "Invalid language code: {code}",
+    "languageDetected": "Detected language: {language}",
+    "noScenariosFound": "No scenarios found in the feature file",
+    "scenarioNotFound": "Scenario not found at line {line}"
+  },
+  "errors": {
+    "fileNotFound": "File not found: {path}",
+    "readError": "Error reading file: {path}",
+    "parseError": "Error parsing feature file: {error}",
+    "executionError": "Error executing tests: {error}",
+    "configError": "Configuration error: {error}"
+  },
+  "testExplorer": {
+    "loading": "Loading tests...",
+    "noTests": "No tests found",
+    "passed": "Passed",
+    "failed": "Failed",
+    "skipped": "Skipped",
+    "running": "Running..."
+  },
+  "statusBar": {
+    "ready": "Behave: Ready",
+    "running": "Behave: Running...",
+    "passed": "Behave: ✓ Passed",
+    "failed": "Behave: ✗ Failed"
+  }
+}

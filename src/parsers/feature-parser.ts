@@ -3,20 +3,24 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { ParsedFeature, Scenario } from "../types/index";
 import { Logger } from "../utils/logger";
+import { getLanguageRegistry } from "../i18n/language-registry";
+import { detectLanguage } from "../i18n/language-detector";
+import { GherkinKeywords } from "../i18n/types";
 
 /**
- * Parser for Gherkin feature files
+ * Parser for Gherkin feature files with multi-language support
  */
 export class FeatureParser {
   /**
    * Parse a feature file and extract scenarios
    * @param filePath - Path to the feature file
+   * @param languageCode - Optional language code (auto-detected if not provided)
    * @returns Parsed feature data
    */
-  public static parseFeatureFile(filePath: string): ParsedFeature | null {
+  public static parseFeatureFile(filePath: string, languageCode?: string): ParsedFeature | null {
     try {
       const content = fs.readFileSync(filePath, "utf-8");
-      return this.parseFeatureContent(content);
+      return this.parseFeatureContent(content, languageCode);
     } catch (error) {
       Logger.getInstance().error("Error parsing feature file:", { error });
       return null;
@@ -26,25 +30,39 @@ export class FeatureParser {
   /**
    * Parse feature content and extract scenarios
    * @param content - Feature file content
+   * @param languageCode - Optional language code (auto-detected if not provided)
    * @returns Parsed feature data with line number information
    */
-  public static parseFeatureContent(content: string): ParsedFeature | null {
+  public static parseFeatureContent(content: string, languageCode?: string): ParsedFeature | null {
     try {
-      const lines = content.split("\n");
-      const featureInfo = this.extractFeatureInfo(lines);
+      const detectionResult = detectLanguage(content);
+      const finalLanguageCode = languageCode ?? detectionResult.languageCode;
+      const registry = getLanguageRegistry();
+      const languageInfo = registry.getLanguage(finalLanguageCode);
+      
+      if (!languageInfo) {
+        Logger.getInstance().warn(`Language '${finalLanguageCode}' not found, falling back to English`);
+      }
 
-      // Return null if no valid feature name was found
+      const englishKeywords = registry.getLanguage('en')?.keywords;
+      if (!englishKeywords) {
+        throw new Error('English language keywords not found');
+      }
+      
+      const keywords = languageInfo?.keywords ?? englishKeywords;
+      const lines = content.split("\n");
+      const featureInfo = this.extractFeatureInfo(lines, keywords);
+
       if (featureInfo.name === "Unknown Feature") {
         return null;
       }
 
-      // Pass featureLineNumber to extractScenarios
-      const scenarios = this.extractScenarios(lines, featureInfo.lineNumber);
+      const scenarios = this.extractScenarios(lines, featureInfo.lineNumber, keywords);
 
       return {
         feature: featureInfo.name,
         scenarios,
-        filePath: "", // Will be set by caller
+        filePath: "",
         featureLineNumber: featureInfo.lineNumber,
       };
     } catch (error) {
@@ -56,9 +74,10 @@ export class FeatureParser {
   /**
    * Extract feature name and line number from content
    * @param lines - Feature file lines
+   * @param keywords - Gherkin keywords for the detected language
    * @returns Feature info with name and line number
    */
-  private static extractFeatureInfo(lines: string[]): {
+  private static extractFeatureInfo(lines: string[], keywords: GherkinKeywords): {
     name: string;
     lineNumber: number;
   } {
@@ -66,11 +85,13 @@ export class FeatureParser {
       const line = lines[i];
       if (line) {
         const trimmed = line.trim();
-        if (trimmed.startsWith("Feature:")) {
-          return {
-            name: trimmed.substring(8).trim(),
-            lineNumber: i + 1, // 1-based line number
-          };
+        for (const featureKeyword of keywords.feature) {
+          if (trimmed.startsWith(featureKeyword)) {
+            return {
+              name: trimmed.substring(featureKeyword.length).trim(),
+              lineNumber: i + 1,
+            };
+          }
         }
       }
     }
@@ -80,9 +101,11 @@ export class FeatureParser {
   /**
    * Extract scenarios from content
    * @param lines - Feature file lines
+   * @param featureLineNumber - Line number of the feature
+   * @param keywords - Gherkin keywords for the detected language
    * @returns Array of scenarios
    */
-  private static extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
+  private static extractScenarios(lines: string[], featureLineNumber: number, keywords: GherkinKeywords): Scenario[] {
     const scenarios: Scenario[] = [];
     const scenarioOutlines: Array<{
       scenario: Scenario;
@@ -100,22 +123,19 @@ export class FeatureParser {
     let inExamplesSection = false;
     let lineNumber = 1;
     let currentScenarioTags: string[] = [];
-    let outlineLineNumber = 1; // Track the scenario outline line number
+    let outlineLineNumber = 1;
 
     for (const line of lines) {
       const trimmed = line.trim();
 
-      // Extract tags that come before scenarios
       if (trimmed.startsWith("@") && !currentScenario) {
         const tagMatches = trimmed.match(/@\w+/g);
         if (tagMatches) {
           currentScenarioTags.push(...tagMatches);
         }
-      } else if (trimmed.startsWith("Scenario:")) {
-        // Save previous scenario if exists
+      } else if (this.matchesKeyword(trimmed, keywords.scenario)) {
         if (currentScenario) {
           if (isCurrentScenarioOutline) {
-            // This was a scenario outline, save it with its examples
             scenarioOutlines.push({
               scenario: currentScenario,
               examplesData: currentExamplesData,
@@ -124,14 +144,13 @@ export class FeatureParser {
               outlineLineNumber,
             });
           } else {
-            // Regular scenario
             scenarios.push(currentScenario);
           }
         }
 
-        const scenarioName = trimmed.substring(9).trim();
+        const matchedKeyword = this.findMatchedKeyword(trimmed, keywords.scenario);
+        const scenarioName = trimmed.substring(matchedKeyword.length).trim();
 
-        // Validate scenario name
         if (!scenarioName) {
           Logger.getInstance().warn(
             `Warning: Empty scenario name found at line ${lineNumber} in feature file`
@@ -145,9 +164,9 @@ export class FeatureParser {
           lineNumber,
           steps: [],
           tags: currentScenarioTags,
-          filePath: "", // Will be set by caller
+          filePath: "",
           isScenarioOutline: false,
-          featureLineNumber, // Add featureLineNumber
+          featureLineNumber,
         };
         inExamplesSection = false;
         isCurrentScenarioOutline = false;
@@ -155,11 +174,9 @@ export class FeatureParser {
         currentExamplesHeaders = [];
         currentExamplesLineNumbers = [];
         currentScenarioTags = [];
-      } else if (trimmed.startsWith("Scenario Outline:")) {
-        // Save previous scenario if exists
+      } else if (this.matchesKeyword(trimmed, keywords.scenario_outline)) {
         if (currentScenario) {
           if (isCurrentScenarioOutline) {
-            // This was a scenario outline, save it with its examples
             scenarioOutlines.push({
               scenario: currentScenario,
               examplesData: currentExamplesData,
@@ -168,14 +185,13 @@ export class FeatureParser {
               outlineLineNumber,
             });
           } else {
-            // Regular scenario
             scenarios.push(currentScenario);
           }
         }
 
-        const scenarioName = trimmed.substring(17).trim();
+        const matchedKeyword = this.findMatchedKeyword(trimmed, keywords.scenario_outline);
+        const scenarioName = trimmed.substring(matchedKeyword.length).trim();
 
-        // Validate scenario outline name
         if (!scenarioName) {
           Logger.getInstance().warn(
             `Warning: Empty scenario outline name found at line ${lineNumber} in feature file`
@@ -189,11 +205,10 @@ export class FeatureParser {
           lineNumber,
           steps: [],
           tags: currentScenarioTags,
-          filePath: "", // Will be set by caller
+          filePath: "",
           isScenarioOutline: true,
-          featureLineNumber, // Add featureLineNumber
+          featureLineNumber,
         };
-        // Store the outline line number for later use
         outlineLineNumber = lineNumber;
         inExamplesSection = false;
         isCurrentScenarioOutline = true;
@@ -202,12 +217,11 @@ export class FeatureParser {
         currentExamplesLineNumbers = [];
         currentScenarioTags = [];
       } else if (trimmed.startsWith("@") && currentScenario) {
-        // Extract tags for the current scenario (after scenario line)
         const tagMatches = trimmed.match(/@\w+/g);
         if (tagMatches) {
           currentScenarioTags.push(...tagMatches);
         }
-      } else if (trimmed === "Examples:" && isCurrentScenarioOutline) {
+      } else if (this.matchesKeyword(trimmed, keywords.examples) && isCurrentScenarioOutline) {
         inExamplesSection = true;
         currentExamplesData = [];
         currentExamplesHeaders = [];
@@ -217,7 +231,6 @@ export class FeatureParser {
         trimmed.startsWith("|") &&
         trimmed.endsWith("|")
       ) {
-        // Parse Examples table
         const cells = trimmed
           .substring(1, trimmed.length - 1)
           .split("|")
@@ -232,20 +245,19 @@ export class FeatureParser {
         }
       } else if (
         currentScenario &&
-        (trimmed.startsWith("Given ") ||
-          trimmed.startsWith("When ") ||
-          trimmed.startsWith("Then ") ||
-          trimmed.startsWith("And ") ||
-          trimmed.startsWith("But "))
+        (this.matchesKeyword(trimmed, keywords.given) ||
+          this.matchesKeyword(trimmed, keywords.when) ||
+          this.matchesKeyword(trimmed, keywords.then) ||
+          this.matchesKeyword(trimmed, keywords.and) ||
+          this.matchesKeyword(trimmed, keywords.but))
       ) {
         currentScenario.steps.push(trimmed);
       } else if (
         inExamplesSection &&
-        (trimmed.startsWith("Scenario:") ||
-          trimmed.startsWith("Scenario Outline:") ||
-          trimmed.startsWith("Feature:"))
+        (this.matchesKeyword(trimmed, keywords.scenario) ||
+          this.matchesKeyword(trimmed, keywords.scenario_outline) ||
+          this.matchesKeyword(trimmed, keywords.feature))
       ) {
-        // Stop at next scenario or feature
         inExamplesSection = false;
         isCurrentScenarioOutline = false;
       }
@@ -331,6 +343,26 @@ export class FeatureParser {
   }
 
   /**
+   * Check if a line matches any of the given keywords
+   * @param line - Line to check
+   * @param keywords - Array of keywords to match
+   * @returns True if line starts with any keyword
+   */
+  private static matchesKeyword(line: string, keywords: string[]): boolean {
+    return keywords.some(keyword => line.startsWith(keyword));
+  }
+
+  /**
+   * Find the matched keyword from a line
+   * @param line - Line to check
+   * @param keywords - Array of keywords to match
+   * @returns The matched keyword or empty string
+   */
+  private static findMatchedKeyword(line: string, keywords: string[]): string {
+    return keywords.find(keyword => line.startsWith(keyword)) ?? '';
+  }
+
+  /**
    * Extract all unique tags from a feature file
    * @param content - Feature file content
    * @returns Array of unique tags
@@ -363,17 +395,25 @@ export class FeatureParser {
     lines: string[],
     scenarioLineNumber: number
   ): vscode.Range {
-    const startLine = scenarioLineNumber - 1; // Convert to 0-based
+    const startLine = scenarioLineNumber - 1;
     let endLine = startLine;
 
-    // Find the end of this scenario (next scenario or end of file)
+    const content = lines.join('\n');
+    const detectionResult = detectLanguage(content);
+    const registry = getLanguageRegistry();
+    const languageInfo = registry.getLanguage(detectionResult.languageCode);
+    const englishKeywords = registry.getLanguage('en')?.keywords;
+    if (!englishKeywords) {
+      throw new Error('English language keywords not found');
+    }
+    const keywords = languageInfo?.keywords ?? englishKeywords;
+
     for (let i = scenarioLineNumber; i < lines.length; i++) {
       const line = lines[i]?.trim() ?? "";
-      // Stop at next scenario, scenario outline, or feature
       if (
-        line.startsWith("Scenario:") ||
-        line.startsWith("Scenario Outline:") ||
-        line.startsWith("Feature:")
+        this.matchesKeyword(line, keywords.scenario) ||
+        this.matchesKeyword(line, keywords.scenario_outline) ||
+        this.matchesKeyword(line, keywords.feature)
       ) {
         break;
       }
@@ -397,10 +437,16 @@ export class FeatureParser {
     const lines = content.split("\n");
     let lineNumber = 1;
 
-    // Extract all available tags from the feature file
-    const allTags = this.extractTags(content);
+    const detectionResult = detectLanguage(content);
+    const registry = getLanguageRegistry();
+    const languageInfo = registry.getLanguage(detectionResult.languageCode);
+    const englishKeywords = registry.getLanguage('en')?.keywords;
+    if (!englishKeywords) {
+      throw new Error('English language keywords not found');
+    }
+    const keywords = languageInfo?.keywords ?? englishKeywords;
 
-    // Parse scenarios to get scenario outline examples
+    const allTags = this.extractTags(content);
     const parsedFeature = this.parseFeatureContent(content);
     const scenarioOutlineExamples =
       parsedFeature?.scenarios.filter(
@@ -411,20 +457,17 @@ export class FeatureParser {
       const trimmed = line.trim();
 
       if (
-        trimmed.startsWith("Scenario:") ||
-        trimmed.startsWith("Scenario Outline:")
+        this.matchesKeyword(trimmed, keywords.scenario) ||
+        this.matchesKeyword(trimmed, keywords.scenario_outline)
       ) {
-        const scenarioName = trimmed.includes("Scenario:")
-          ? trimmed.substring(9).trim()
-          : trimmed.substring(17).trim();
+        const isScenarioOutline = this.matchesKeyword(trimmed, keywords.scenario_outline);
+        const matchedKeyword = isScenarioOutline 
+          ? this.findMatchedKeyword(trimmed, keywords.scenario_outline)
+          : this.findMatchedKeyword(trimmed, keywords.scenario);
+        const scenarioName = trimmed.substring(matchedKeyword.length).trim();
 
-        // Calculate the range for this scenario (multiline)
         const scenarioRange = this.getScenarioRange(lines, lineNumber);
 
-        // Check if this is a scenario outline
-        const isScenarioOutline = trimmed.startsWith("Scenario Outline:");
-
-        // Add Run Scenario CodeLens
         codeLenses.push(
           new vscode.CodeLens(scenarioRange, {
             title: isScenarioOutline
@@ -435,7 +478,6 @@ export class FeatureParser {
           })
         );
 
-        // Add Debug Scenario CodeLens
         codeLenses.push(
           new vscode.CodeLens(scenarioRange, {
             title: isScenarioOutline
@@ -478,26 +520,23 @@ export class FeatureParser {
       );
     }
 
-    // Add feature-level CodeLens at the top of the file
     if (lines.length > 0) {
-      // Find the Feature: line (it might be after tags)
       let featureLineIndex = -1;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (typeof line === "string" && line.trim().startsWith("Feature:")) {
+        if (typeof line === "string" && this.matchesKeyword(line.trim(), keywords.feature)) {
           featureLineIndex = i;
           break;
         }
       }
 
       if (featureLineIndex >= 0) {
-        // Calculate feature range (from feature line to first scenario or end of file)
         let featureEndLine = featureLineIndex;
         for (let i = featureLineIndex + 1; i < lines.length; i++) {
           const line = lines[i]?.trim() ?? "";
           if (
-            line.startsWith("Scenario:") ||
-            line.startsWith("Scenario Outline:")
+            this.matchesKeyword(line, keywords.scenario) ||
+            this.matchesKeyword(line, keywords.scenario_outline)
           ) {
             break;
           }
@@ -505,7 +544,6 @@ export class FeatureParser {
         }
         const featureRange = new vscode.Range(0, 0, featureEndLine, 0);
 
-        // Add Run Feature File CodeLens
         codeLenses.push(
           new vscode.CodeLens(featureRange, {
             title: "📁 Run Feature File",
@@ -514,7 +552,6 @@ export class FeatureParser {
           })
         );
 
-        // Add individual tag CodeLenses for all unique tags
         for (const tag of allTags) {
           codeLenses.push(
             new vscode.CodeLens(featureRange, {

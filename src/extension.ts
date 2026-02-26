@@ -4,6 +4,8 @@ import { BehaveTestProvider } from "./test-providers/behave-test-provider";
 import { CommandManager } from "./commands/command-manager";
 import { ExtensionConfig } from "./core/extension-config";
 import { FeatureParser } from "./parsers/feature-parser";
+import { getLanguageRegistry } from "./i18n/language-registry";
+import { getLocalizationService } from "./i18n/localization-service";
 
 let testProvider: BehaveTestProvider | undefined;
 let commandManager: CommandManager | undefined;
@@ -41,7 +43,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   try {
-    // Validate configuration
+    logger.info("Initializing i18n services...");
+    getLanguageRegistry();
+    getLocalizationService();
+    logger.info("i18n services initialized successfully");
+
     if (!config.isValid()) {
       const errors = config.getValidationErrors();
       logger.warn("Configuration validation failed during activation", {
@@ -52,9 +58,8 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
 
-    // Get configuration for feature flags
     const enableTestExplorer = config.enableTestExplorer;
-    const enableCodeLens = true; // Always enable CodeLens for now
+    const enableCodeLens = true;
 
     logger.info(
       `Configuration: TestExplorer=${enableTestExplorer}, CodeLens=${enableCodeLens}`

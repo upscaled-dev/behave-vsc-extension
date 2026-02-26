@@ -16,6 +16,7 @@ A VS Code extension for discovering, running, and debugging [Behave](https://beh
 - ⚙️ **Configurable**: Customize behave command, working directory, and more
 - 🔄 **Auto-refresh**: Automatically updates when feature files change
 - 🚀 **Parallel Execution**: Run tests in parallel for faster execution
+- 🌍 **Multi-Language Support**: Write feature files in 70+ languages (Russian, French, German, Spanish, etc.) with automatic language detection
 - 🤝 **Extension Compatibility**: Designed to work seamlessly with Cucumber (Gherkin) Full Support
 
 ## Installation
@@ -239,6 +240,90 @@ In the Test Explorer, these will appear as:
 - **@smoke** (group)
   - **1: Login with different credentials - username: admin, password: admin123, expected_result: dashboard**
   - **2: Login with different credentials - username: user, password: user123, expected_result: dashboard**
+
+## Multi-Language Support (i18n)
+
+The extension supports writing feature files in **70+ languages** with automatic language detection!
+
+### Quick Start with Multi-Language Support
+
+**Russian Example:**
+
+```gherkin
+# language: ru
+Функционал: Управление пользователями
+
+  Сценарий: Создание нового пользователя
+    Дано я нахожусь на странице создания пользователя
+    Когда я ввожу имя "Иван Петров"
+    И я ввожу email "ivan@example.com"
+    И я нажимаю кнопку "Создать"
+    Тогда пользователь должен быть создан
+```
+
+**French Example:**
+
+```gherkin
+# language: fr
+Fonctionnalité: Gestion des produits
+
+  Scénario: Ajouter un produit au panier
+    Soit je suis sur la page produit
+    Quand j'ajoute le produit au panier
+    Alors le produit devrait être dans le panier
+```
+
+**German Example:**
+
+```gherkin
+# language: de
+Funktionalität: Benutzerverwaltung
+
+  Szenario: Benutzer erstellen
+    Angenommen ich bin auf der Benutzerseite
+    Wenn ich auf "Erstellen" klicke
+    Dann sollte ein neuer Benutzer erstellt werden
+```
+
+### Supported Languages
+
+- Russian (ru), English (en), French (fr), German (de), Spanish (es)
+- Portuguese (pt), Italian (it), Dutch (nl), Polish (pl), Czech (cs)
+- Ukrainian (uk), Turkish (tr), Arabic (ar), Hebrew (he), Japanese (ja)
+- Chinese (zh-CN, zh-TW), Korean (ko), and many more (70+ total)
+
+### Language Detection
+
+The extension automatically detects the language in two ways:
+
+1. **Explicit Header** (Recommended):
+   ```gherkin
+   # language: ru
+   ```
+
+2. **Auto-Detection**: Based on the first Gherkin keyword (e.g., `Функционал:`, `Fonctionnalité:`, `Funktionalität:`)
+
+### Configuration
+
+```json
+{
+  "behaveTestRunner.defaultLanguage": "ru",
+  "behaveTestRunner.detectLanguageAutomatically": true
+}
+```
+
+### For More Information
+
+See [**Multi-Language Support Guide**](docs/i18n-usage-guide.md) for comprehensive documentation with examples, best practices, and troubleshooting.
+
+### Example Files
+
+The repository includes example feature files in multiple languages:
+
+- `features/examples-ru.feature` - Russian examples
+- `features/examples-fr.feature` - French examples
+- `features/examples-de.feature` - German examples
+- `features/examples-es.feature` - Spanish examples
 
 ## Extension Compatibility
 

@@ -1,0 +1,49 @@
+{
+  "codelens": {
+    "runScenario": "▶️ Запустить сценарий",
+    "runFeature": "▶️ Запустить функцию",
+    "debugScenario": "🐛 Отладить сценарий",
+    "debugFeature": "🐛 Отладить функцию"
+  },
+  "commands": {
+    "runAllTests": "Запустить все тесты Behave",
+    "runCurrentFile": "Запустить текущий файл функции",
+    "runScenario": "Запустить сценарий",
+    "debugScenario": "Отладить сценарий",
+    "selectPythonInterpreter": "Выбрать интерпретатор Python",
+    "showOutput": "Показать вывод Behave"
+  },
+  "messages": {
+    "noFeatureFile": "В данный момент не открыт файл функции",
+    "noPythonInterpreter": "Интерпретатор Python не выбран. Пожалуйста, выберите его сначала.",
+    "testRunning": "Выполняются тесты...",
+    "testCompleted": "Тесты завершены",
+    "testFailed": "Тесты не прошли",
+    "parsingError": "Ошибка разбора файла функции",
+    "invalidLanguage": "Неверный код языка: {code}",
+    "languageDetected": "Обнаружен язык: {language}",
+    "noScenariosFound": "В файле функции не найдено сценариев",
+    "scenarioNotFound": "Сценарий не найден на строке {line}"
+  },
+  "errors": {
+    "fileNotFound": "Файл не найден: {path}",
+    "readError": "Ошибка чтения файла: {path}",
+    "parseError": "Ошибка разбора файла функции: {error}",
+    "executionError": "Ошибка выполнения тестов: {error}",
+    "configError": "Ошибка конфигурации: {error}"
+  },
+  "testExplorer": {
+    "loading": "Загрузка тестов...",
+    "noTests": "Тесты не найдены",
+    "passed": "Пройдено",
+    "failed": "Не пройдено",
+    "skipped": "Пропущено",
+    "running": "Выполняется..."
+  },
+  "statusBar": {
+    "ready": "Behave: Готов",
+    "running": "Behave: Выполняется...",
+    "passed": "Behave: ✓ Пройдено",
+    "failed": "Behave: ✗ Не пройдено"
+  }
+}
