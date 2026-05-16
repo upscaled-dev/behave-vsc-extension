@@ -87,252 +87,241 @@ export class FeatureParser {
   }
 
   /**
-   * Extract scenarios from content
+   * Extract scenarios from content. Supports:
+   * - Background (feature-level and rule-level — steps attached to each child scenario)
+   * - Rule (Gherkin 6+ — scenarios inside a Rule carry its name)
+   * - Scenario Outline with one or more (named, tagged) Examples blocks
    * @param lines - Feature file lines
-   * @returns Array of scenarios
+   * @returns Array of scenarios with expanded examples
    */
   private extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
-    const scenarios: Scenario[] = [];
-    const scenarioOutlines: Array<{
+    interface ExamplesBlock {
+      name?: string;
+      tags: string[];
+      headers: string[];
+      data: string[][];
+      lineNumbers: number[];
+      blockLineNumber: number;
+    }
+    interface OutlineCollect {
       scenario: Scenario;
-      examplesData: string[][];
-      examplesHeaders: string[];
-      examplesLineNumbers: number[];
+      examplesBlocks: ExamplesBlock[];
       outlineLineNumber: number;
-    }> = [];
+    }
 
+    const isStepLine = (s: string): boolean =>
+      /^(Given|When|Then|And|But) /.test(s);
+    const isTableRow = (s: string): boolean =>
+      s.startsWith("|") && s.endsWith("|");
+    const parseTableRow = (s: string): string[] =>
+      s.substring(1, s.length - 1).split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+
+    const regularScenarios: Scenario[] = [];
+    const scenarioOutlines: OutlineCollect[] = [];
+
+    let pendingTags: string[] = [];
     let currentScenario: Scenario | null = null;
-    let currentExamplesData: string[][] = [];
-    let currentExamplesHeaders: string[] = [];
-    let currentExamplesLineNumbers: number[] = [];
-    let isCurrentScenarioOutline = false;
-    let inExamplesSection = false;
+    let currentOutline: OutlineCollect | null = null;
+    let currentExamplesBlock: ExamplesBlock | null = null;
+
+    let featureBackgroundSteps: string[] = [];
+    let ruleBackgroundSteps: string[] = [];
+    let currentRuleName: string | undefined;
+    let backgroundTarget: "feature" | "rule" | null = null; // active Background collection
+
+    const flushCurrentScenario = (): void => {
+      if (!currentScenario) {return;}
+      if (currentOutline) {
+        if (currentExamplesBlock) {
+          currentOutline.examplesBlocks.push(currentExamplesBlock);
+          currentExamplesBlock = null;
+        }
+        scenarioOutlines.push(currentOutline);
+        currentOutline = null;
+      } else {
+        regularScenarios.push(currentScenario);
+      }
+      currentScenario = null;
+    };
+
+    const consumeTags = (): string[] => {
+      const t = pendingTags;
+      pendingTags = [];
+      return t;
+    };
+
+    const combinedBackgroundSteps = (): string[] => {
+      return [...featureBackgroundSteps, ...ruleBackgroundSteps];
+    };
+
     let lineNumber = 1;
-    let currentScenarioTags: string[] = [];
-    let outlineLineNumber = 1; // Track the scenario outline line number
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
 
-    for (const line of lines) {
-      const trimmed = line.trim();
+      if (trimmed === "" || trimmed.startsWith("#")) {
+        lineNumber++;
+        continue;
+      }
 
-      // Extract tags that come before scenarios
-      if (trimmed.startsWith("@") && !currentScenario) {
-        const tagMatches = trimmed.match(/@\w+/g);
-        if (tagMatches) {
-          currentScenarioTags.push(...tagMatches);
-        }
-      } else if (trimmed.startsWith("Scenario:")) {
-        // Save previous scenario if exists
-        if (currentScenario) {
-          if (isCurrentScenarioOutline) {
-            // This was a scenario outline, save it with its examples
-            scenarioOutlines.push({
-              scenario: currentScenario,
-              examplesData: currentExamplesData,
-              examplesHeaders: currentExamplesHeaders,
-              examplesLineNumbers: currentExamplesLineNumbers,
-              outlineLineNumber,
-            });
-          } else {
-            // Regular scenario
-            scenarios.push(currentScenario);
-          }
-        }
+      if (trimmed.startsWith("@")) {
+        const matches = trimmed.match(/@\S+/g);
+        if (matches) {pendingTags.push(...matches);}
+        lineNumber++;
+        continue;
+      }
 
-        const scenarioName = trimmed.substring(9).trim();
+      if (trimmed.startsWith("Rule:")) {
+        flushCurrentScenario();
+        currentRuleName = trimmed.substring(5).trim() || undefined;
+        ruleBackgroundSteps = [];
+        backgroundTarget = null;
+        pendingTags = []; // Rule-level tags aren't propagated to children — drop
+        lineNumber++;
+        continue;
+      }
 
-        // Validate scenario name
-        if (!scenarioName) {
-          this.logger.warn(
-            `Warning: Empty scenario name found at line ${lineNumber} in feature file`
-          );
-        }
-
-        currentScenario = {
-          name: scenarioName || "Unnamed Scenario",
-          line: lineNumber,
-          range: new vscode.Range(lineNumber - 1, 0, lineNumber - 1, 0),
-          lineNumber,
-          steps: [],
-          tags: currentScenarioTags,
-          filePath: "", // Will be set by caller
-          isScenarioOutline: false,
-          featureLineNumber, // Add featureLineNumber
-        };
-        inExamplesSection = false;
-        isCurrentScenarioOutline = false;
-        currentExamplesData = [];
-        currentExamplesHeaders = [];
-        currentExamplesLineNumbers = [];
-        currentScenarioTags = [];
-      } else if (trimmed.startsWith("Scenario Outline:")) {
-        // Save previous scenario if exists
-        if (currentScenario) {
-          if (isCurrentScenarioOutline) {
-            // This was a scenario outline, save it with its examples
-            scenarioOutlines.push({
-              scenario: currentScenario,
-              examplesData: currentExamplesData,
-              examplesHeaders: currentExamplesHeaders,
-              examplesLineNumbers: currentExamplesLineNumbers,
-              outlineLineNumber,
-            });
-          } else {
-            // Regular scenario
-            scenarios.push(currentScenario);
-          }
-        }
-
-        const scenarioName = trimmed.substring(17).trim();
-
-        // Validate scenario outline name
-        if (!scenarioName) {
-          this.logger.warn(
-            `Warning: Empty scenario outline name found at line ${lineNumber} in feature file`
-          );
-        }
-
-        currentScenario = {
-          name: scenarioName || "Unnamed Scenario Outline",
-          line: lineNumber,
-          range: new vscode.Range(lineNumber - 1, 0, lineNumber - 1, 0),
-          lineNumber,
-          steps: [],
-          tags: currentScenarioTags,
-          filePath: "", // Will be set by caller
-          isScenarioOutline: true,
-          featureLineNumber, // Add featureLineNumber
-        };
-        // Store the outline line number for later use
-        outlineLineNumber = lineNumber;
-        inExamplesSection = false;
-        isCurrentScenarioOutline = true;
-        currentExamplesData = [];
-        currentExamplesHeaders = [];
-        currentExamplesLineNumbers = [];
-        currentScenarioTags = [];
-      } else if (trimmed.startsWith("@") && currentScenario) {
-        // Extract tags for the current scenario (after scenario line)
-        const tagMatches = trimmed.match(/@\w+/g);
-        if (tagMatches) {
-          currentScenarioTags.push(...tagMatches);
-        }
-      } else if (trimmed === "Examples:" && isCurrentScenarioOutline) {
-        inExamplesSection = true;
-        currentExamplesData = [];
-        currentExamplesHeaders = [];
-        currentExamplesLineNumbers = [];
-      } else if (
-        inExamplesSection &&
-        trimmed.startsWith("|") &&
-        trimmed.endsWith("|")
-      ) {
-        // Parse Examples table
-        const cells = trimmed
-          .substring(1, trimmed.length - 1)
-          .split("|")
-          .map((cell) => cell.trim())
-          .filter((cell) => cell.length > 0);
-
-        if (currentExamplesHeaders.length === 0) {
-          currentExamplesHeaders = cells;
+      if (trimmed.startsWith("Background:")) {
+        flushCurrentScenario();
+        backgroundTarget = currentRuleName ? "rule" : "feature";
+        if (backgroundTarget === "feature") {
+          featureBackgroundSteps = [];
         } else {
-          currentExamplesData.push(cells);
-          currentExamplesLineNumbers.push(lineNumber);
+          ruleBackgroundSteps = [];
         }
-      } else if (
-        currentScenario &&
-        (trimmed.startsWith("Given ") ||
-          trimmed.startsWith("When ") ||
-          trimmed.startsWith("Then ") ||
-          trimmed.startsWith("And ") ||
-          trimmed.startsWith("But "))
-      ) {
-        currentScenario.steps.push(trimmed);
-      } else if (
-        inExamplesSection &&
-        (trimmed.startsWith("Scenario:") ||
-          trimmed.startsWith("Scenario Outline:") ||
-          trimmed.startsWith("Feature:"))
-      ) {
-        // Stop at next scenario or feature
-        inExamplesSection = false;
-        isCurrentScenarioOutline = false;
+        pendingTags = []; // Background can't be tagged
+        lineNumber++;
+        continue;
+      }
+
+      if (trimmed.startsWith("Scenario Outline:") || trimmed.startsWith("Scenario:")) {
+        flushCurrentScenario();
+        backgroundTarget = null;
+
+        const isOutline = trimmed.startsWith("Scenario Outline:");
+        const name = (isOutline ? trimmed.substring(17) : trimmed.substring(9)).trim();
+        if (!name) {
+          this.logger.warn(`Empty ${isOutline ? "scenario outline" : "scenario"} name at line ${lineNumber}`);
+        }
+
+        const scenario: Scenario = {
+          name: name || (isOutline ? "Unnamed Scenario Outline" : "Unnamed Scenario"),
+          line: lineNumber,
+          range: new vscode.Range(lineNumber - 1, 0, lineNumber - 1, 0),
+          lineNumber,
+          steps: [],
+          tags: consumeTags(),
+          filePath: "",
+          isScenarioOutline: isOutline,
+          featureLineNumber,
+        };
+        if (currentRuleName) {scenario.ruleName = currentRuleName;}
+        const bg = combinedBackgroundSteps();
+        if (bg.length > 0) {scenario.backgroundSteps = bg;}
+
+        if (isOutline) {
+          currentOutline = { scenario, examplesBlocks: [], outlineLineNumber: lineNumber };
+        }
+        currentScenario = scenario;
+        lineNumber++;
+        continue;
+      }
+
+      if (trimmed.startsWith("Examples:") && currentOutline) {
+        if (currentExamplesBlock) {
+          currentOutline.examplesBlocks.push(currentExamplesBlock);
+        }
+        const blockName = trimmed.substring(9).trim() || undefined;
+        currentExamplesBlock = {
+          ...(blockName ? { name: blockName } : {}),
+          tags: consumeTags(),
+          headers: [],
+          data: [],
+          lineNumbers: [],
+          blockLineNumber: lineNumber,
+        };
+        lineNumber++;
+        continue;
+      }
+
+      if (currentExamplesBlock && isTableRow(trimmed)) {
+        const cells = parseTableRow(trimmed);
+        if (currentExamplesBlock.headers.length === 0) {
+          currentExamplesBlock.headers = cells;
+        } else {
+          currentExamplesBlock.data.push(cells);
+          currentExamplesBlock.lineNumbers.push(lineNumber);
+        }
+        lineNumber++;
+        continue;
+      }
+
+      if (isStepLine(trimmed)) {
+        if (backgroundTarget === "feature") {
+          featureBackgroundSteps.push(trimmed);
+        } else if (backgroundTarget === "rule") {
+          ruleBackgroundSteps.push(trimmed);
+        } else if (currentScenario) {
+          currentScenario.steps.push(trimmed);
+        }
+        lineNumber++;
+        continue;
+      }
+
+      // Non-step line outside Background terminates Background collection
+      if (backgroundTarget && !isStepLine(trimmed)) {
+        backgroundTarget = null;
       }
 
       lineNumber++;
     }
 
-    // Save the last scenario
-    if (currentScenario) {
-      if (isCurrentScenarioOutline) {
-        // This was a scenario outline, save it with its examples
-        scenarioOutlines.push({
-          scenario: currentScenario,
-          examplesData: currentExamplesData,
-          examplesHeaders: currentExamplesHeaders,
-          examplesLineNumbers: currentExamplesLineNumbers,
-          outlineLineNumber,
-        });
-      } else {
-        // Regular scenario
-        scenarios.push(currentScenario);
-      }
-    }
+    flushCurrentScenario();
 
-    // Now process Scenario Outlines and create individual scenarios for each example
-    const finalScenarios: Scenario[] = [];
+    const finalScenarios: Scenario[] = [...regularScenarios];
 
-    // Add regular scenarios first
-    finalScenarios.push(...scenarios);
-
-    // Process scenario outlines
     for (const outline of scenarioOutlines) {
-      if (outline.examplesData.length > 0) {
-        // Create individual scenarios for each example
-        for (let i = 0; i < outline.examplesData.length; i++) {
-          const exampleData = outline.examplesData[i];
-          if (exampleData) {
-            // Create a more concise name for the example
-            const exampleValues = exampleData
-              .map((value, index) => {
-                const header = outline.examplesHeaders[index];
-                if (!header) {
-                  return `param${index}: ${value}`;
-                }
-                // Truncate long header names to keep the name readable
-                const shortHeader =
-                  header.length > 15 ? `${header.substring(0, 12)}...` : header;
-                return `${shortHeader}: ${value}`;
-              })
-              .join(", ");
-
-            const exampleScenario: Scenario = {
-              name: `${i + 1}: ${outline.scenario.name} - ${exampleValues}`,
-              line: outline.examplesLineNumbers[i] ?? outline.scenario.line + i, // Use actual example line number
-              range: new vscode.Range(
-                (outline.examplesLineNumbers[i] ?? outline.scenario.line + i) -
-                  1,
-                0,
-                (outline.examplesLineNumbers[i] ?? outline.scenario.line + i) -
-                  1,
-                0
-              ),
-              lineNumber:
-                outline.examplesLineNumbers[i] ?? outline.scenario.line + i, // Use actual example line number
-              steps: outline.scenario.steps,
-              tags: outline.scenario.tags ?? [], // Ensure tags is always an array
-              filePath: "", // Will be set by caller
-              isScenarioOutline: true,
-              outlineLineNumber: outline.outlineLineNumber, // Store the parent outline line number
-              featureLineNumber, // Add featureLineNumber
-            };
-
-            finalScenarios.push(exampleScenario);
-          }
-        }
-      } else {
-        // No examples found, add as regular scenario
+      const allRows = outline.examplesBlocks.reduce((sum, b) => sum + b.data.length, 0);
+      if (allRows === 0) {
         finalScenarios.push(outline.scenario);
+        continue;
+      }
+
+      let exampleIndex = 0;
+      for (const block of outline.examplesBlocks) {
+        for (let i = 0; i < block.data.length; i++) {
+          const row = block.data[i];
+          if (!row) {continue;}
+          exampleIndex++;
+          const exampleLine = block.lineNumbers[i] ?? outline.scenario.line + exampleIndex;
+          const exampleValues = row
+            .map((value, idx) => {
+              const header = block.headers[idx];
+              if (!header) {return `param${idx}: ${value}`;}
+              const shortHeader = header.length > 15 ? `${header.substring(0, 12)}...` : header;
+              return `${shortHeader}: ${value}`;
+            })
+            .join(", ");
+
+          const mergedTags = [...(outline.scenario.tags ?? []), ...block.tags];
+          const exampleScenario: Scenario = {
+            name: `${exampleIndex}: ${outline.scenario.name} - ${exampleValues}`,
+            line: exampleLine,
+            range: new vscode.Range(exampleLine - 1, 0, exampleLine - 1, 0),
+            lineNumber: exampleLine,
+            steps: outline.scenario.steps,
+            tags: mergedTags,
+            filePath: "",
+            isScenarioOutline: true,
+            outlineLineNumber: outline.outlineLineNumber,
+            featureLineNumber,
+            examplesBlockLineNumber: block.blockLineNumber,
+          };
+          if (block.name) {exampleScenario.examplesBlockName = block.name;}
+          if (block.tags.length > 0) {exampleScenario.examplesBlockTags = block.tags;}
+          if (outline.scenario.ruleName) {exampleScenario.ruleName = outline.scenario.ruleName;}
+          if (outline.scenario.backgroundSteps) {exampleScenario.backgroundSteps = outline.scenario.backgroundSteps;}
+          finalScenarios.push(exampleScenario);
+        }
       }
     }
 

@@ -6,22 +6,29 @@ import {
   TestRunResult,
   ParallelExecutionOptions,
   FeatureExecutionOptions,
+  BehaveExtensionContext,
 } from "../types/index";
 import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "./extension-config";
 import { BehaveJsonParser } from "../utils/behave-json-parser";
+import { CucumberJsonParser } from "../utils/cucumber-json-parser";
 
-/**
- * Handles execution of Behave tests
- */
+function errMsg(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error occurred";
+}
+
+type CommandResult = { success: boolean; output: string; error: string; returnCode: number };
+
 export class TestExecutor {
-  private config: ExtensionConfig;
-  private logger: Logger;
-  private workspace: typeof vscode.workspace;
-  private window: typeof vscode.window;
-  private debug: typeof vscode.debug;
+  private readonly config: ExtensionConfig;
+  private readonly logger: Logger;
+  private readonly workspace: typeof vscode.workspace;
+  private readonly window: typeof vscode.window;
+  private readonly debug: typeof vscode.debug;
   private terminal: vscode.Terminal | undefined;
-  private behaveJsonParser: BehaveJsonParser;
+  private readonly behaveJsonParser: BehaveJsonParser;
+  private readonly cucumberJsonParser: CucumberJsonParser;
+  private context?: BehaveExtensionContext;
 
   public static create(
     workspace?: typeof vscode.workspace,
@@ -29,9 +36,10 @@ export class TestExecutor {
     debug?: typeof vscode.debug,
     config?: ExtensionConfig,
     logger?: Logger,
-    behaveJsonParser?: BehaveJsonParser
+    behaveJsonParser?: BehaveJsonParser,
+    cucumberJsonParser?: CucumberJsonParser
   ): TestExecutor {
-    return new TestExecutor(workspace, window, debug, config, logger, behaveJsonParser);
+    return new TestExecutor(workspace, window, debug, config, logger, behaveJsonParser, cucumberJsonParser);
   }
 
   constructor(
@@ -40,7 +48,8 @@ export class TestExecutor {
     debug: typeof vscode.debug = vscode.debug,
     config?: ExtensionConfig,
     logger?: Logger,
-    behaveJsonParser?: BehaveJsonParser
+    behaveJsonParser?: BehaveJsonParser,
+    cucumberJsonParser?: CucumberJsonParser
   ) {
     this.workspace = workspace;
     this.window = window;
@@ -48,156 +57,136 @@ export class TestExecutor {
     this.config = config ?? ExtensionConfig.create();
     this.logger = logger ?? Logger.create();
     this.behaveJsonParser = behaveJsonParser ?? BehaveJsonParser.create(logger);
+    this.cucumberJsonParser = cucumberJsonParser ?? CucumberJsonParser.create(logger);
   }
 
-  /**
-   * Reload configuration from VS Code settings
-   */
+  public setContext(context: BehaveExtensionContext): void {
+    this.context = context;
+  }
+
   public reloadConfiguration(): void {
     this.config.reload();
   }
 
-  /**
-   * Run a specific scenario with enhanced options
-   * @param options - Test execution options
-   */
-  public async runScenario(options: TestExecutionOptions): Promise<void> {
+  private getCurrentFramework(): string {
+    return this.context?.commandBuilder?.getFrameworkName() ?? "behave";
+  }
+
+  private async parseTestResults(output: string): Promise<Record<string, string>> {
+    if (this.getCurrentFramework() === "pytest-bdd") {
+      return this.parsePytestBddResults();
+    }
+    try {
+      const parsed = this.behaveJsonParser.parseBehaveJsonOutput(output);
+      const results: Record<string, string> = {};
+      for (const s of parsed) {
+        if (s.filePath && s.lineNumber) {
+          results[`${s.filePath}:${s.lineNumber}`] = s.status;
+        }
+      }
+      return results;
+    } catch (error) {
+      this.logger.error("Failed to parse Behave JSON output", { error });
+      return {};
+    }
+  }
+
+  private async parsePytestBddResults(): Promise<Record<string, string>> {
+    const cucumberJsonPath = path.join(process.cwd(), "cucumber-output.json");
+    const retryDelay = 100;
+    for (let i = 0; i < 3; i++) {
+      if (fs.existsSync(cucumberJsonPath)) {
+        try {
+          const content = fs.readFileSync(cucumberJsonPath, "utf8");
+          return this.cucumberJsonParser.parseCucumberJsonWithMultipleKeys(content);
+        } catch (error) {
+          this.logger.error("Failed to parse cucumber JSON", { error });
+          return {};
+        }
+      }
+      await new Promise((r) => setTimeout(r, retryDelay));
+    }
+    this.logger.warn("Cucumber JSON file not found after retries");
+    return {};
+  }
+
+  private buildScenarioCommandLegacy(behaveCommand: string, options: TestExecutionOptions, addJson = false): string {
     const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } = options;
+    const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
+    const isOutlineRun = scenarioName && !isExample && filePath && fs.existsSync(filePath);
+
+    let command: string;
+    if (isOutlineRun) {
+      command = `${behaveCommand} "${filePath}" --name="${scenarioName}"`;
+    } else {
+      command = `${behaveCommand} "${filePath}${lineNumber ? `:${lineNumber}` : ""}"`;
+      if (scenarioName) {
+        const name = isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName;
+        command += ` --name="${name}"`;
+      }
+    }
+    command += this.tagsSuffix(tags);
+    command += this.formatSuffix(outputFormat, addJson);
+    if (dryRun || this.config.dryRun) {command += " --dry-run";}
+    return command;
+  }
+
+  private buildFeatureCommandLegacy(behaveCommand: string, options: FeatureExecutionOptions, addJson = false): string {
+    let command = `${behaveCommand} "${options.filePath}"`;
+    command += this.tagsSuffix(options.tags, false);
+    command += this.formatSuffix(options.outputFormat, addJson);
+    if (options.dryRun || this.config.dryRun) {command += " --dry-run";}
+    return command;
+  }
+
+  private tagsSuffix(tags: string | undefined, useConfigFallback = true): string {
+    const effective = tags ?? (useConfigFallback ? this.config.tags : "");
+    return effective ? ` --tags="${effective}" --no-skipped` : "";
+  }
+
+  private formatSuffix(outputFormat: string | undefined, addJson: boolean): string {
+    if (addJson) {return " --format=json";}
+    const format = outputFormat ?? this.config.outputFormat;
+    return format && format !== "pretty" ? ` --format=${format}` : "";
+  }
+
+  public async runScenario(options: TestExecutionOptions): Promise<void> {
     const workingDir = this.getWorkingDirectory();
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-
-    // Check if this is a scenario outline example
-    const isScenarioOutlineExample = this.isScenarioOutlineExample(
-      filePath,
-      lineNumber,
-      scenarioName
-    );
-
-    // If scenarioName is a scenario outline (not an example), run all examples in one command
-    if (
-      scenarioName &&
-      !isScenarioOutlineExample &&
-      filePath &&
-      fs.existsSync(filePath)
-    ) {
-      // Run a single command with --name="<outline name>"
-      let command = `${behaveCommand} "${filePath}" --name="${scenarioName}"`;
-      if (tags) {
-        command += ` --tags="${tags}"`;
-        command += " --no-skipped";
-      } else if (this.config.tags) {
-        command += ` --tags="${this.config.tags}"`;
-        command += " --no-skipped";
-      }
-      const format = outputFormat ?? this.config.outputFormat;
-      if (format && format !== "pretty") {
-        command += ` --format=${format}`;
-      }
-      if (dryRun || this.config.dryRun) {
-        command += " --dry-run";
-      }
+    if (this.context?.commandBuilder) {
+      const command = await this.context.commandBuilder.buildScenarioCommand(options);
       this.executeCommand(command, workingDir);
       return;
     }
-
-    let command = `${behaveCommand} "${filePath}${lineNumber ? `:${lineNumber}` : ""}"`;
-
-    if (scenarioName) {
-      // For scenario outline examples, we need to use the original outline name
-      if (isScenarioOutlineExample) {
-        const originalOutlineName = this.extractOriginalOutlineName(scenarioName);
-        command += ` --name="${originalOutlineName}"`;
-      } else {
-        command += ` --name="${scenarioName}"`;
-      }
-    }
-    // If no scenarioName is provided, behave will run all scenarios in the file
-    // This is used for scenario outlines to iterate over all examples
-
-    // Add tags if specified
-    if (tags) {
-      command += ` --tags="${tags}"`;
-      command += " --no-skipped";
-    } else if (this.config.tags) {
-      command += ` --tags="${this.config.tags}"`;
-      command += " --no-skipped";
-    }
-
-    // Add output format
-    const format = outputFormat ?? this.config.outputFormat;
-    if (format && format !== "pretty") {
-      command += ` --format=${format}`;
-    }
-
-    // Add dry run option
-    if (dryRun || this.config.dryRun) {
-      command += " --dry-run";
-    }
-
-    this.executeCommand(command, workingDir);
+    const behaveCommand = await this.config.getIntelligentBehaveCommand();
+    this.executeCommand(this.buildScenarioCommandLegacy(behaveCommand, options), workingDir);
   }
 
-  /**
-   * Debug a specific scenario
-   * @param options - Test execution options
-   */
   public async debugScenario(options: TestExecutionOptions): Promise<void> {
     try {
-      const { filePath, lineNumber, scenarioName } = options;
+      if (this.context?.commandBuilder) {
+        const command = await this.context.commandBuilder.buildDebugCommand(options);
+        this.executeCommand(command, this.getWorkingDirectory());
+        return;
+      }
 
+      const { filePath, lineNumber, scenarioName } = options;
       if (!filePath || filePath.trim() === "") {
         throw new Error("File path is required for debugging");
       }
 
       const workingDir = this.getWorkingDirectory();
+      const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
+      const isOutlineRun = scenarioName && !isExample && fs.existsSync(filePath);
 
-      // Check if this is a scenario outline example
-      const isScenarioOutlineExample = this.isScenarioOutlineExample(
-        filePath,
-        lineNumber,
-        scenarioName
-      );
+      const args: string[] = isOutlineRun
+        ? [filePath, "--name", scenarioName]
+        : [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
 
-      // If scenarioName is a scenario outline (not an example), debug all examples in one command
-      if (
-        scenarioName &&
-        !isScenarioOutlineExample &&
-        filePath &&
-        fs.existsSync(filePath)
-      ) {
-        // Debug a single command with --name="<outline name>" (without line number)
-        const args = [filePath, "--name", scenarioName];
-        
-        const debugConfig = {
-          name: `Debug: ${scenarioName}`,
-          type: "python",
-          request: "launch",
-          module: "behave",
-          args,
-          cwd: workingDir,
-          console: "integratedTerminal",
-          justMyCode: false,
-        };
-
-        await this.debug.startDebugging(undefined, debugConfig);
-        return;
+      if (!isOutlineRun && scenarioName) {
+        args.push("--name", isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName);
       }
 
-      // Build args array similar to runScenario method
-      const args = [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
-
-      // Add scenario name filter if provided
-      if (scenarioName) {
-        // For scenario outline examples, we need to use the original outline name
-        if (isScenarioOutlineExample) {
-          const originalOutlineName = this.extractOriginalOutlineName(scenarioName);
-          args.push("--name", originalOutlineName);
-        } else {
-          args.push("--name", scenarioName);
-        }
-      }
-
-      const debugConfig = {
+      await this.debug.startDebugging(undefined, {
         name: `Debug: ${scenarioName ?? "Test Scenario"}`,
         type: "python",
         request: "launch",
@@ -206,111 +195,52 @@ export class TestExecutor {
         cwd: workingDir,
         console: "integratedTerminal",
         justMyCode: false,
-      };
-
-      await this.debug.startDebugging(undefined, debugConfig);
+      });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error(
-        `Failed to start debug session: ${errorMessage}`,
-        {
-          filePath: options.filePath,
-          lineNumber: options.lineNumber,
-          scenarioName: options.scenarioName,
-        }
-      );
-
+      const msg = errMsg(error);
+      this.logger.error(`Failed to start debug session: ${msg}`, {
+        filePath: options.filePath,
+        lineNumber: options.lineNumber,
+        scenarioName: options.scenarioName,
+      });
       await this.window.showErrorMessage(
-        `Failed to start debug session: ${errorMessage}. Please ensure Python and behave are properly configured.`
+        `Failed to start debug session: ${msg}. Please ensure Python and behave are properly configured.`
       );
     }
   }
 
-  /**
-   * Run a feature file with enhanced options
-   * @param options - Feature execution options
-   */
   public async runFeatureFile(options: FeatureExecutionOptions): Promise<void> {
     const workingDir = this.getWorkingDirectory();
+    if (this.context?.commandBuilder) {
+      const command = await this.context.commandBuilder.buildFeatureCommand(options);
+      this.executeCommand(command, workingDir);
+      return;
+    }
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    let command = `${behaveCommand} "${options.filePath}"`;
-
-    // Add tags if specified
-    if (options.tags) {
-      command += ` --tags="${options.tags}"`;
-      command += " --no-skipped";
-    }
-
-    // Add output format
-    const outputFormat = options.outputFormat ?? this.config.outputFormat;
-    if (outputFormat && outputFormat !== "pretty") {
-      command += ` --format=${outputFormat}`;
-    }
-
-    // Add dry run option
-    if (options.dryRun || this.config.dryRun) {
-      command += " --dry-run";
-    }
-
-    this.executeCommand(command, workingDir);
+    this.executeCommand(this.buildFeatureCommandLegacy(behaveCommand, options), workingDir);
   }
 
-  /**
-   * Run a feature file (legacy method for backward compatibility)
-   * @param filePath - Path to the feature file
-   */
-  public async runFeatureFileLegacy(filePath: string): Promise<void> {
-    await this.runFeatureFile({ filePath });
-  }
-
-  /**
-   * Run all tests in the workspace
-   */
   public async runAllTests(): Promise<void> {
     const workingDir = this.getWorkingDirectory();
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    let command = `${behaveCommand}`;
-
-    // Add tags if specified in config
-    if (this.config.tags) {
-      command += ` --tags="${this.config.tags}"`;
-      command += " --no-skipped";
-    }
-
-    // Add output format
-    if (this.config.outputFormat && this.config.outputFormat !== "pretty") {
-      command += ` --format=${this.config.outputFormat}`;
-    }
-
-    // Add dry run option
-    if (this.config.dryRun) {
-      command += " --dry-run";
-    }
-
+    let command = behaveCommand;
+    command += this.tagsSuffix(undefined);
+    command += this.formatSuffix(undefined, false);
+    if (this.config.dryRun) {command += " --dry-run";}
     this.executeCommand(command, workingDir);
   }
 
-  /**
-   * Run tests in parallel
-   * @param options - Parallel execution options
-   */
   public runTestsInParallel(options: ParallelExecutionOptions): void {
     const workingDir = this.getWorkingDirectory();
-    const behaveCommand = this.config.behaveCommand;
-    const maxProcesses =
-      options.maxProcesses ?? this.config.maxParallelProcesses;
-
-    // Log the number of workers being used
+    const maxProcesses = options.maxProcesses ?? this.config.maxParallelProcesses;
 
     this.window.showInformationMessage(
       `Running ${options.featureFiles.length} feature files in parallel (max ${maxProcesses} workers)`
     );
 
-    // Create a script to run tests in parallel
     const scriptContent = this.createParallelExecutionScript(
       options.featureFiles,
-      behaveCommand,
+      this.config.behaveCommand,
       maxProcesses,
       options.tags,
       options.outputFormat ?? undefined,
@@ -318,18 +248,10 @@ export class TestExecutor {
     );
 
     const scriptPath = path.join(workingDir, "parallel_behave_runner.py");
-
-    // Write the script to a temporary file
     fs.writeFileSync(scriptPath, scriptContent);
-
-    // Execute the parallel script
-    const command = `python "${scriptPath}"`;
-    this.executeCommand(command, workingDir);
+    this.executeCommand(`python "${scriptPath}"`, workingDir);
   }
 
-  /**
-   * Create a Python script for parallel execution
-   */
   private createParallelExecutionScript(
     featureFiles: string[],
     behaveCommand: string,
@@ -338,21 +260,11 @@ export class TestExecutor {
     outputFormat?: string,
     dryRun?: boolean
   ): string {
-    // Build the command arguments properly for Python
-    const cmdArgs = [];
-    if (tags) {
-      cmdArgs.push("--tags", tags);
-      cmdArgs.push("--no-skipped");
-    }
-    if (outputFormat && outputFormat !== "pretty") {
-      cmdArgs.push("--format", outputFormat);
-    }
-    if (dryRun) {
-      cmdArgs.push("--dry-run");
-    }
-
-    const cmdArgsStr =
-      cmdArgs.length > 0 ? ` + ${JSON.stringify(cmdArgs)}` : "";
+    const cmdArgs: string[] = [];
+    if (tags) {cmdArgs.push("--tags", tags, "--no-skipped");}
+    if (outputFormat && outputFormat !== "pretty") {cmdArgs.push("--format", outputFormat);}
+    if (dryRun) {cmdArgs.push("--dry-run");}
+    const cmdArgsStr = cmdArgs.length > 0 ? ` + ${JSON.stringify(cmdArgs)}` : "";
 
     return `
 import subprocess
@@ -416,87 +328,37 @@ if __name__ == "__main__":
 `;
   }
 
-  /**
-   * Execute a command in the terminal
-   * @param command - Command to execute
-   * @param workingDir - Working directory
-   */
   private executeCommand(command: string, workingDir: string): void {
     try {
-      if (!command || command.trim() === "") {
-        throw new Error("Command cannot be empty");
-      }
+      if (!command || command.trim() === "") {throw new Error("Command cannot be empty");}
 
-      // Reuse existing terminal or create a new one if it doesn't exist
       this.terminal ??= this.window.createTerminal("Behave Test Runner");
-
       this.terminal.show();
-
-      // Clear the terminal for a clean run
       this.terminal.sendText("clear");
-
-      // Change to working directory if specified
       if (workingDir && workingDir !== process.cwd()) {
         this.terminal.sendText(`cd "${workingDir}"`);
       }
-
       this.terminal.sendText(command);
-
-      this.logger.info(`Executed command: ${command}`, { workingDir });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error(`Failed to execute command: ${errorMessage}`, {
-        command,
-        workingDir,
-      });
-
-      this.window.showErrorMessage(
-        `Failed to execute test command: ${errorMessage}`
-      );
+      const msg = errMsg(error);
+      this.logger.error(`Failed to execute command: ${msg}`, { command, workingDir });
+      this.window.showErrorMessage(`Failed to execute test command: ${msg}`);
     }
   }
 
-  /**
-   * Execute a command and capture the output and return code
-   * @param command - Command to execute
-   * @param workingDir - Working directory
-   * @returns Promise with command execution result
-   */
-  private async executeCommandWithOutput(
-    command: string,
-    workingDir: string
-  ): Promise<{
-    success: boolean;
-    output: string;
-    error: string;
-    returnCode: number;
-  }> {
+  private async executeCommandWithOutput(command: string, workingDir: string): Promise<CommandResult> {
     return new Promise((resolve) => {
-      try {
-        if (!command || command.trim() === "") {
-          resolve({
-            success: false,
-            output: "",
-            error: "Command cannot be empty",
-            returnCode: 1,
-          });
-          return;
-        }
+      if (!command || command.trim() === "") {
+        resolve({ success: false, output: "", error: "Command cannot be empty", returnCode: 1 });
+        return;
+      }
 
-        // Import child_process dynamically to avoid issues in extension context
+      try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const { spawn } = require("child_process");
-
-        // Split command into parts for spawn
-        const commandParts = command.split(" ");
-        const executable = commandParts[0];
-        const args = commandParts.slice(1);
-
-        this.logger.info(
-          `Executing command with output capture: ${command}`,
-          { workingDir }
-        );
+        const parts = command.split(" ");
+        const executable = parts[0];
+        const args = parts.slice(1);
 
         const childProcess = spawn(executable, args, {
           cwd: workingDir,
@@ -506,203 +368,60 @@ if __name__ == "__main__":
 
         let stdout = "";
         let stderr = "";
-
-        childProcess.stdout?.on("data", (data: Buffer) => {
-          stdout += data.toString();
-        });
-
-        childProcess.stderr?.on("data", (data: Buffer) => {
-          stderr += data.toString();
-        });
+        childProcess.stdout?.on("data", (data: Buffer) => { stdout += data.toString(); });
+        childProcess.stderr?.on("data", (data: Buffer) => { stderr += data.toString(); });
 
         childProcess.on("close", (code: number) => {
           const returnCode = code ?? 1;
-          const success = returnCode === 0;
-
-          this.logger.info(
-            `Command completed with return code: ${returnCode}`,
-            {
-              command,
-              success,
-              stdoutLength: stdout.length,
-              stderrLength: stderr.length,
-            }
-          );
-
-          resolve({
-            success,
-            output: stdout,
-            error: stderr,
-            returnCode,
-          });
+          resolve({ success: returnCode === 0, output: stdout, error: stderr, returnCode });
         });
 
         childProcess.on("error", (error: Error) => {
-          this.logger.error(
-            `Command execution error: ${error.message}`,
-            {
-              command,
-              workingDir,
-            }
-          );
-
-          resolve({
-            success: false,
-            output: "",
-            error: error.message,
-            returnCode: 1,
-          });
+          this.logger.error(`Command execution error: ${error.message}`, { command, workingDir });
+          resolve({ success: false, output: "", error: error.message, returnCode: 1 });
         });
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error occurred";
-        this.logger.error(
-          `Failed to execute command with output: ${errorMessage}`,
-          {
-            command,
-            workingDir,
-          }
-        );
-
-        resolve({
-          success: false,
-          output: "",
-          error: errorMessage,
-          returnCode: 1,
-        });
+        const msg = errMsg(error);
+        this.logger.error(`Failed to execute command with output: ${msg}`, { command, workingDir });
+        resolve({ success: false, output: "", error: msg, returnCode: 1 });
       }
     });
   }
 
-  /**
-   * Get the working directory for test execution
-   */
   private getWorkingDirectory(): string {
-    // Use configured working directory if set
-    if (this.config.workingDirectory) {
-      return this.config.workingDirectory;
-    }
-
-    // Fall back to workspace folder or current directory
-    const workspaceFolders = this.workspace.workspaceFolders;
-    return workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+    if (this.config.workingDirectory) {return this.config.workingDirectory;}
+    return this.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   }
 
-  /**
-   * Execute a test with output capture
-   * @param options - Test execution options
-   * @returns Test execution result
-   */
   public async executeTestWithOutput(options: TestExecutionOptions): Promise<TestRunResult> {
     const startTime = Date.now();
-
     try {
       await this.runScenario(options);
-      const duration = Math.max(1, Date.now() - startTime);
-
-      return {
-        success: true,
-        output: "Test executed successfully",
-        duration,
-      };
+      return { success: true, output: "Test executed successfully", duration: Math.max(1, Date.now() - startTime) };
     } catch (error) {
-      const duration = Math.max(1, Date.now() - startTime);
-
-      return {
-        success: false,
-        output: `Test failed: ${error}`,
-        duration,
-      };
+      return { success: false, output: `Test failed: ${error}`, duration: Math.max(1, Date.now() - startTime) };
     }
   }
 
-  /**
-   * Run a scenario with output capture and return actual results
-   * @param options - Test execution options
-   * @returns Promise with test execution result
-   */
   public async runScenarioWithOutput(
     options: TestExecutionOptions
   ): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
     const startTime = Date.now();
-    const { filePath, lineNumber, scenarioName, tags, dryRun } =
-      options;
     const workingDir = this.getWorkingDirectory();
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
-      this.logger.info("Preparing to run scenario with output", {
-        filePath,
-        lineNumber,
-        scenarioName,
-        tags,
-        dryRun,
-      });
-      // Check if this is a scenario outline example
-      const isScenarioOutlineExample = this.isScenarioOutlineExample(
-        filePath,
-        lineNumber,
-        scenarioName
-      );
-
-      let command = `${behaveCommand} "${filePath}${
-        lineNumber ? `:${lineNumber}` : ""
-      }"`;
-
-      if (scenarioName) {
-        // For scenario outline examples, we need to use the original outline name
-        if (isScenarioOutlineExample) {
-          const originalOutlineName =
-            this.extractOriginalOutlineName(scenarioName);
-          command += ` --name="${originalOutlineName}"`;
-        } else {
-          command += ` --name="${scenarioName}"`;
-        }
+      let command: string;
+      if (this.context?.commandBuilder) {
+        command = await this.context.commandBuilder.buildScenarioCommand(options);
+        if (this.getCurrentFramework() === "behave") {command += " --format=json";}
+      } else {
+        const behaveCommand = await this.config.getIntelligentBehaveCommand();
+        command = this.buildScenarioCommandLegacy(behaveCommand, options, true);
       }
 
-      // Add tags if specified
-      if (tags) {
-        command += ` --tags="${tags}"`;
-        command += " --no-skipped";
-      } else if (this.config.tags) {
-        command += ` --tags="${this.config.tags}"`;
-        command += " --no-skipped";
-      }
-
-      // Always use JSON output for parsing
-      command += " --format=json";
-
-      // Add dry run option
-      if (dryRun || this.config.dryRun) {
-        command += " --dry-run";
-      }
-
-      this.logger.info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
-
-      this.logger.info("Behave command executed", {
-        command,
-        returnCode: result.returnCode,
-        stdoutLength: result.output.length,
-        stderrLength: result.error.length,
-        duration,
-      });
-
-      const scenarioResults: Record<string, string> = {};
-      try {
-        this.logger.info("Parsing Behave JSON output");
-        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
-        for (const s of parsed) {
-          if (s.filePath && s.lineNumber) {
-            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
-          }
-        }
-        this.logger.info("Parsed scenario results", { scenarioResults });
-      } catch {
-        this.logger.error("Failed to parse Behave JSON output", { output: result.output });
-        // If parsing fails, fallback to overall result
-      }
+      const scenarioResults = await this.parseTestResults(result.output);
 
       return {
         success: result.success,
@@ -712,87 +431,34 @@ if __name__ == "__main__":
         scenarioResults,
       };
     } catch (error) {
-      const duration = Math.max(1, Date.now() - startTime);
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error("runScenarioWithOutput failed", {
-        error: errorMessage,
-        filePath,
-        lineNumber,
-        scenarioName,
-        tags,
-        dryRun,
-        duration,
-      });
       return {
         success: false,
         output: "",
-        error: errorMessage,
-        duration,
+        error: errMsg(error),
+        duration: Math.max(1, Date.now() - startTime),
       };
     }
   }
 
-  /**
-   * Run a feature file with output capture and return actual results
-   * @param options - Feature execution options
-   * @returns Promise with test execution result
-   */
   public async runFeatureFileWithOutput(
     options: FeatureExecutionOptions
   ): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
     const startTime = Date.now();
     const workingDir = this.getWorkingDirectory();
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     try {
-      this.logger.info("Preparing to run feature file with output", {
-        filePath: options.filePath,
-        tags: options.tags,
-        dryRun: options.dryRun,
-      });
-      let command = `${behaveCommand} "${options.filePath}"`;
-
-      // Add tags if specified
-      if (options.tags) {
-        command += ` --tags="${options.tags}"`;
-        command += " --no-skipped";
+      let command: string;
+      if (this.context?.commandBuilder) {
+        command = await this.context.commandBuilder.buildFeatureCommand(options);
+        if (this.getCurrentFramework() === "behave") {command += " --format=json";}
+      } else {
+        const behaveCommand = await this.config.getIntelligentBehaveCommand();
+        command = this.buildFeatureCommandLegacy(behaveCommand, options, true);
       }
 
-      // Always use JSON output for parsing
-      command += " --format=json";
-
-      // Add dry run option
-      if (options.dryRun || this.config.dryRun) {
-        command += " --dry-run";
-      }
-
-      this.logger.info("Executing Behave command", { command, workingDir });
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
-
-      this.logger.info("Behave command executed", {
-        command,
-        returnCode: result.returnCode,
-        stdoutLength: result.output.length,
-        stderrLength: result.error.length,
-        duration,
-      });
-
-      const scenarioResults: Record<string, string> = {};
-      try {
-        this.logger.info("Parsing Behave JSON output");
-        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
-        for (const s of parsed) {
-          if (s.filePath && s.lineNumber) {
-            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
-          }
-        }
-        this.logger.info("Parsed scenario results", { scenarioResults });
-      } catch {
-        this.logger.error("Failed to parse Behave JSON output", { output: result.output });
-        // If parsing fails, fallback to overall result
-      }
+      const scenarioResults = await this.parseTestResults(result.output);
 
       return {
         success: result.success,
@@ -802,88 +468,42 @@ if __name__ == "__main__":
         scenarioResults,
       };
     } catch (error) {
-      const duration = Math.max(1, Date.now() - startTime);
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error("runFeatureFileWithOutput failed", {
-        error: errorMessage,
-        filePath: options.filePath,
-        tags: options.tags,
-        dryRun: options.dryRun,
-        duration,
-      });
       return {
         success: false,
         output: "",
-        error: errorMessage,
-        duration,
+        error: errMsg(error),
+        duration: Math.max(1, Date.now() - startTime),
       };
     }
   }
 
-  /**
-   * Discover all feature files in the workspace
-   * @returns Array of feature file paths
-   */
   public async discoverFeatureFiles(): Promise<string[]> {
     try {
       const pattern = this.config.testFilePattern;
-
       if (!pattern || pattern.trim() === "") {
         throw new Error("Test file pattern is empty or invalid");
       }
-
       const files = await this.workspace.findFiles(pattern);
-
-      if (!files || files.length === 0) {
-        // This is not an error, just no files found
-        return [];
-      }
-
-      return files.map((file) => file.fsPath);
+      return files?.map((f) => f.fsPath) ?? [];
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error(
-        `Failed to discover feature files: ${errorMessage}`,
-        {
-          pattern: this.config.testFilePattern,
-          workspaceFolders: this.workspace.workspaceFolders?.length ?? 0,
-        }
-      );
-
-      // Show user-friendly error message
+      const msg = errMsg(error);
+      this.logger.error(`Failed to discover feature files: ${msg}`, {
+        pattern: this.config.testFilePattern,
+      });
       await this.window.showErrorMessage(
-        `Test discovery failed: ${errorMessage}. Please check your test file pattern configuration.`
+        `Test discovery failed: ${msg}. Please check your test file pattern configuration.`
       );
-
       return [];
     }
   }
 
-  /**
-   * Run all feature files in parallel
-   */
   public async runAllTestsInParallel(): Promise<void> {
     try {
       const featureFiles = await this.discoverFeatureFiles();
-
       if (featureFiles.length === 0) {
-        await this.window.showWarningMessage(
-          "No feature files found to run in parallel"
-        );
+        await this.window.showWarningMessage("No feature files found to run in parallel");
         return;
       }
-
-      this.logger.info(
-        `Starting parallel execution of ${featureFiles.length} feature files`,
-        {
-          maxProcesses: this.config.maxParallelProcesses,
-          tags: this.config.tags,
-          outputFormat: this.config.outputFormat,
-        }
-      );
-
       this.runTestsInParallel({
         featureFiles,
         maxProcesses: this.config.maxParallelProcesses,
@@ -892,61 +512,33 @@ if __name__ == "__main__":
         dryRun: this.config.dryRun,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error occurred";
-      this.logger.error(
-        `Failed to run tests in parallel: ${errorMessage}`
-      );
-
+      const msg = errMsg(error);
+      this.logger.error(`Failed to run tests in parallel: ${msg}`);
       await this.window.showErrorMessage(
-        `Failed to run tests in parallel: ${errorMessage}. Please check your configuration and try again.`
+        `Failed to run tests in parallel: ${msg}. Please check your configuration and try again.`
       );
     }
   }
 
-  /**
-   * Validate that behave is installed
-   * @returns True if behave is available
-   */
   public validateBehaveInstallation(): boolean {
-    // Use the existing terminal if available, otherwise create a new one
     this.terminal ??= this.window.createTerminal("Behave Test Runner");
     this.terminal.show();
     this.terminal.sendText("behave --version");
     return true;
   }
 
-  /**
-   * Check if a scenario is a scenario outline example
-   */
-  private isScenarioOutlineExample(
-    _filePath: string,
-    _lineNumber?: number,
-    scenarioName?: string
-  ): boolean {
-    if (!scenarioName) {
-      return false;
-    }
-
-    // Check if the scenario name follows the pattern of scenario outline examples
-    // Pattern: "1: Scenario Name - param1: value1, param2: value2"
+  private isScenarioOutlineExample(_filePath: string, _lineNumber?: number, scenarioName?: string): boolean {
+    if (!scenarioName) {return false;}
     return /^\d+:\s*.+\s*-\s*/.test(scenarioName);
   }
 
-  /**
-   * Extract the original outline name from a scenario outline example name
-   */
   private extractOriginalOutlineName(scenarioName: string): string {
     const match = scenarioName.match(/^(\d+):\s*(.*?)\s*-\s*/);
-    if (match?.[2]) {
-      return match[2].trim();
-    }
-    return scenarioName;
+    const extracted = match?.[2]?.trim();
+    if (!extracted) {return scenarioName;}
+    return extracted;
   }
 
-  /**
-   * Dispose of the terminal when the executor is no longer needed
-   */
   public dispose(): void {
     if (this.terminal) {
       this.terminal.dispose();
@@ -954,31 +546,35 @@ if __name__ == "__main__":
     }
   }
 
-  // Add methods for tag-based group execution
   public async runAllTestsWithTags(tag: string): Promise<void> {
     const workingDir = this.getWorkingDirectory();
+    if (this.context?.commandBuilder) {
+      const command = await this.context.commandBuilder.buildTagCommand(tag);
+      this.executeCommand(command, workingDir);
+      return;
+    }
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    const command = `${behaveCommand} --tags="${tag}" --no-skipped`;
-    this.executeCommand(command, workingDir);
+    this.executeCommand(`${behaveCommand} --tags="${tag}" --no-skipped`, workingDir);
   }
 
-  public async runAllTestsWithTagsOutput(tag: string): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
+  public async runAllTestsWithTagsOutput(
+    tag: string
+  ): Promise<TestRunResult & { scenarioResults?: Record<string, string> }> {
     const startTime = Date.now();
     const workingDir = this.getWorkingDirectory();
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    const command = `${behaveCommand} --tags="${tag}" --no-skipped --format=json`;
+
+    let command: string;
+    if (this.context?.commandBuilder) {
+      command = await this.context.commandBuilder.buildTagCommand(tag);
+    } else {
+      const behaveCommand = await this.config.getIntelligentBehaveCommand();
+      command = `${behaveCommand} --tags="${tag}" --no-skipped --format=json`;
+    }
+
     try {
       const result = await this.executeCommandWithOutput(command, workingDir);
       const duration = Math.max(1, Date.now() - startTime);
-      const scenarioResults: Record<string, string> = {};
-      try {
-        const parsed = this.behaveJsonParser.parseBehaveJsonOutput(result.output);
-        for (const s of parsed) {
-          if (s.filePath && s.lineNumber) {
-            scenarioResults[`${s.filePath}:${s.lineNumber}`] = s.status;
-          }
-        }
-      } catch {}
+      const scenarioResults = await this.parseTestResults(result.output);
       return {
         success: result.success,
         output: result.output,
@@ -987,13 +583,11 @@ if __name__ == "__main__":
         scenarioResults,
       };
     } catch (error) {
-      const duration = Math.max(1, Date.now() - startTime);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
       return {
         success: false,
         output: "",
-        error: errorMessage,
-        duration,
+        error: errMsg(error),
+        duration: Math.max(1, Date.now() - startTime),
       };
     }
   }

@@ -57,7 +57,7 @@ git commit -m "feat!: breaking change in API"
 
 ### Version Management
 - `npm run version` - Automatically bump version based on commits
-- `npm run release` - Create a new release with standard-version
+- `npm run release` - Create a new release with commit-and-tag-version
 - `npm run release:patch` - Force patch release
 - `npm run release:minor` - Force minor release
 - `npm run release:major` - Force major release
@@ -156,6 +156,6 @@ git commit -m "fix: emergency fix" --no-verify
 ## 📚 Additional Resources
 
 - [Conventional Commits](https://www.conventionalcommits.org/)
-- [Standard Version](https://github.com/conventional-changelog/standard-version)
+- [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version)
 - [Commitizen](http://commitizen.github.io/cz-cli/)
 - [Husky](https://typicode.github.io/husky/) 

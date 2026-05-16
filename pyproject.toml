@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "behave-test-runner-extension"
+version = "1.2.8"
+description = "VS Code extension for running behave and pytest-bdd tests"
+requires-python = ">=3.8"
+dependencies = [
+    "pytest>=6.0",
+    "pytest-bdd>=4.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v --tb=short"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "smoke: marks tests as smoke tests",
+    "regression: marks tests as regression tests",
+    "authentication: marks tests as authentication tests",
+    "registration: marks tests as registration tests",
+    "feature: marks tests as feature tests",
+    "critical: marks tests as critical tests",
+    "validation: marks tests as validation tests",
+    "performance: marks tests as performance tests",
+    "stress: marks tests as stress tests",
+    "security: marks tests as security tests",
+    "ui: marks tests as UI tests",
+    "api: marks tests as API tests",
+    "integration: marks tests as integration tests",
+    "data: marks tests as data tests",
+    "database: marks tests as database tests",
+] 

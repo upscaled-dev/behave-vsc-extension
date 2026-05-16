@@ -9,7 +9,11 @@ import { TestExecutor } from "./core/test-executor";
 import { TestDiscoveryManager } from "./core/test-discovery-manager";
 import { TestOrganizationManager } from "./core/test-organization";
 import { BehaveJsonParser } from "./utils/behave-json-parser";
+import { PytestResultParser } from "./utils/pytest-result-parser";
+import { CucumberJsonParser } from "./utils/cucumber-json-parser";
 import { TestItemMapping } from "./utils/test-item-mapping";
+import { FrameworkFactory } from "./core/framework-factory";
+import { StepDefinitionProvider } from "./providers/step-definition-provider";
 
 let testProvider: BehaveTestProvider | undefined;
 let commandManager: CommandManager | undefined;
@@ -19,22 +23,77 @@ let testController: vscode.TestController | undefined;
 /**
  * Activate the extension
  */
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // Prevent multiple activations
+  if (isActivated) {
+    const logger = Logger.create();
+    logger.warn("Extension already activated, skipping duplicate activation");
+    return;
+  }
+
   const logger = Logger.create();
   const config = ExtensionConfig.create();
   const featureParser = FeatureParser.create(logger);
+  
+  // Get framework setting - respect manual setting over auto-detection
+  let framework = config.getFramework();
+  
+  // Only auto-detect if no framework is explicitly set (i.e., still using default "behave")
+  if (config.isFrameworkAutoDetectionEnabled() && framework === "behave") {
+    const autoDetectedFramework = await FrameworkFactory.autoDetect();
+    
+    // Only use auto-detected framework if it's different from the default
+    if (autoDetectedFramework !== "behave") {
+      framework = autoDetectedFramework;
+      logger.info(`Auto-detected framework: ${framework}`);
+    }
+    
+    // Validate framework setup and warn about conflicts
+    const validation = await FrameworkFactory.validateFrameworkSetup();
+    if (!validation.isValid) {
+      logger.warn("Framework setup validation failed", {
+        issues: validation.issues,
+        recommendation: validation.recommendation
+      });
+    }
+  }
+  
+  // Create the appropriate command builder
+  const commandBuilder = FrameworkFactory.createCommandBuilder(framework, config);
+  
+  logger.info(`Extension activated with framework: ${framework}`, {
+    autoDetection: config.isFrameworkAutoDetectionEnabled(),
+    detectedFramework: framework
+  });
+
+  // Create TestExecutor and inject context
+  const testExecutor = TestExecutor.create(
+    undefined, // workspace (use default)
+    undefined, // window (use default)
+    undefined, // debug (use default)
+    config,
+    logger,
+    BehaveJsonParser.create(logger),
+    CucumberJsonParser.create(logger)
+  );
   
   // Create shared context for dependency injection
   const sharedContext: BehaveExtensionContext = {
     logger,
     config,
-    testExecutor: TestExecutor.create(),
+    testExecutor,
     discoveryManager: TestDiscoveryManager.create(),
     organizationManager: TestOrganizationManager.create(),
     featureParser,
     behaveJsonParser: BehaveJsonParser.create(logger),
-    testItemMapping: TestItemMapping.create()
+    pytestResultParser: PytestResultParser.create(logger),
+    cucumberJsonParser: CucumberJsonParser.create(logger),
+    testItemMapping: TestItemMapping.create(),
+    commandBuilder
   };
+
+  // Inject context into TestExecutor so it can use CommandBuilder
+  testExecutor.setContext(sharedContext);
 
   // Note: VS Code doesn't provide direct access to existing test controllers
   // We'll rely on the unique ID approach to avoid conflicts
@@ -71,17 +130,11 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
 
-    // Get configuration for feature flags
-    const enableTestExplorer = config.enableTestExplorer;
-    const enableCodeLens = true; // Always enable CodeLens for now
+    const enableCodeLens = config.enableCodeLens;
+    logger.info(`Configuration: CodeLens=${enableCodeLens}`);
 
-    logger.info(
-      `Configuration: TestExplorer=${enableTestExplorer}, CodeLens=${enableCodeLens}`
-    );
-
-    // Create test controller only if Test Explorer is enabled
-    if (enableTestExplorer) {
-      logger.info("Creating test controller for Test Explorer integration");
+        // Always create test controller - Test Explorer is core functionality
+    logger.info("Creating test controller for Test Explorer integration");
 
       // Create test controller with a stable ID
       const controllerId = "behaveTestRunner";
@@ -125,17 +178,10 @@ export function activate(context: vscode.ExtensionContext): void {
           controllerId,
         });
 
-        // If test controller creation fails, still try to register commands
-        // but skip Test Explorer integration
-        logger.warn(
-          "Skipping Test Explorer integration due to controller creation failure"
-        );
+        // If test controller creation fails, this is a critical error
+        // since Test Explorer is core functionality
+        throw new Error(`Failed to create test controller: ${errorMessage}`);
       }
-    } else {
-      logger.warn(
-        "Test Explorer integration is disabled - no test controller created"
-      );
-    }
 
     // Register commands using the centralized command manager
     commandManager = CommandManager.create(sharedContext);
@@ -144,7 +190,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Set the test provider reference in the command manager for status updates
     if (testProvider && commandManager) {
+      logger.info("Setting test provider in command manager", {
+        testProviderType: testProvider.constructor.name,
+        hasOrganizationManager: !!(testProvider as unknown as { organizationManager?: unknown }).organizationManager,
+        hasDiscoveryManager: !!(testProvider as unknown as { discoveryManager?: unknown }).discoveryManager
+      });
       commandManager.setTestProvider(testProvider as unknown);
+    } else {
+      logger.error("Failed to set test provider in command manager", {
+        hasTestProvider: !!testProvider,
+        hasCommandManager: !!commandManager,
+        testProviderType: testProvider?.constructor.name
+      });
     }
 
     // Register CodeLens provider for feature files
@@ -167,6 +224,21 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       );
       context.subscriptions.push(codeLensProvider);
+    }
+
+    // Register Definition provider for step navigation: .feature step -> Python @given/@when/@then
+    if (config.enableStepDefinitionNavigation) {
+      const stepDefProvider = new StepDefinitionProvider(config.stepDefinitionPaths, logger);
+      const definitionRegistration = vscode.languages.registerDefinitionProvider(
+        [
+          { pattern: "**/*.feature", scheme: "file" },
+          { language: "gherkin", scheme: "file" },
+          { language: "feature", scheme: "file" },
+        ],
+        stepDefProvider
+      );
+      context.subscriptions.push(definitionRegistration);
+      logger.info(`Step definition navigation enabled (paths: ${config.stepDefinitionPaths.join(", ")})`);
     }
 
     isActivated = true;
@@ -192,25 +264,47 @@ export function deactivate(): void {
   const logger = Logger.create();
   logger.info("👋 Behave Test Runner extension is deactivating");
 
-  // Clean up resources
-  if (testProvider) {
-    testProvider.dispose();
+  try {
+    // Clean up resources in reverse order of creation
+    if (commandManager) {
+      logger.info("Disposing command manager");
+      commandManager.dispose();
+      commandManager = undefined;
+    }
+
+    if (testProvider) {
+      logger.info("Disposing test provider");
+      testProvider.dispose();
+      testProvider = undefined;
+    }
+
+    if (testController) {
+      logger.info("Disposing test controller");
+      testController.dispose();
+      testController = undefined;
+    }
+
+    // Clear the singleton instance
+    CommandManager.clearInstance();
+
+    // Dispose the logger singleton to clean up the output channel
+    try {
+      Logger.getInstance().dispose();
+    } catch {
+      logger.debug("Logger already disposed or not available");
+    }
+
+    // Reset activation state
+    isActivated = false;
+    
+    // Clear any remaining global references
     testProvider = undefined;
-  }
-
-  if (testController) {
-    testController.dispose();
-    testController = undefined;
-  }
-
-  if (commandManager) {
-    commandManager.dispose();
     commandManager = undefined;
+    testController = undefined;
+    
+    logger.info("✅ Extension cleanup completed");
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    logger.error("Error during extension deactivation", { error: errorMessage });
   }
-
-  // Clear the singleton instance
-  CommandManager.clearInstance();
-
-  isActivated = false;
-  logger.info("✅ Extension cleanup completed");
 }

@@ -269,7 +269,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ### Automated Versioning
 
-The project uses `standard-version` for automated versioning:
+The project uses `commit-and-tag-version` for automated versioning:
 
 ```bash
 # Patch release
