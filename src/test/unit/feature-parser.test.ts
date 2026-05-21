@@ -2,6 +2,7 @@ import * as assert from "assert";
 import { FeatureParser } from "../../parsers/feature-parser.js";
 
 suite("FeatureParser Unit Tests", () => {
+  const featureParser = FeatureParser.create();
   test("Should parse valid feature file with scenarios", () => {
     const featureContent = `
 Feature: Calculator
@@ -22,7 +23,7 @@ Feature: Calculator
     Then the result should be -30 on the screen
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Calculator");
@@ -47,7 +48,7 @@ Feature: Login Tests
       | user     | wrong    | error |
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Login Tests");
@@ -69,12 +70,12 @@ Some random content here
 No Feature: line found
 `;
 
-    const result = FeatureParser.parseFeatureContent(invalidContent);
+    const result = featureParser.parseFeatureContent(invalidContent);
     assert.strictEqual(result, null);
   });
 
   test("Should return null for empty content", () => {
-    const result = FeatureParser.parseFeatureContent("");
+    const result = featureParser.parseFeatureContent("");
     assert.strictEqual(result, null);
   });
 
@@ -84,7 +85,7 @@ Feature: Empty Feature
   This feature has no scenarios
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Empty Feature");
@@ -109,7 +110,7 @@ Feature: Calculator
       | 1 | 1      |
 `;
 
-    const codeLenses = FeatureParser.provideScenarioCodeLenses(
+    const codeLenses = featureParser.provideScenarioCodeLenses(
       featureContent,
       "/test.feature"
     );
@@ -156,22 +157,22 @@ Feature: Calculator
 
   test("Should validate feature file extensions", () => {
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.feature"),
+      featureParser.isValidFeatureFile("/path/to/test.feature"),
       true
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.FEATURE"),
+      featureParser.isValidFeatureFile("/path/to/test.FEATURE"),
       true
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test.txt"),
+      featureParser.isValidFeatureFile("/path/to/test.txt"),
       false
     );
     assert.strictEqual(
-      FeatureParser.isValidFeatureFile("/path/to/test"),
+      featureParser.isValidFeatureFile("/path/to/test"),
       false
     );
-    assert.strictEqual(FeatureParser.isValidFeatureFile(""), false);
+    assert.strictEqual(featureParser.isValidFeatureFile(""), false);
   });
 
   test("Should handle complex scenario outlines with multiple examples", () => {
@@ -191,7 +192,7 @@ Feature: Shopping Cart
       | pen |
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Shopping Cart");
@@ -212,7 +213,7 @@ Feature: Special Characters
     Then it should also work
 `;
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.scenarios.length, 2);
@@ -246,7 +247,7 @@ Feature: Test
   # Another comment
 `;
 
-    const result = FeatureParser.parseFeatureContent(malformedContent);
+    const result = featureParser.parseFeatureContent(malformedContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Test");
@@ -257,7 +258,7 @@ Feature: Test
     const featureContent =
       "Feature: Test\r\n  Scenario: Test\r\n    Given I have a test\r\n    When I run it\r\n    Then it should work\r\n";
 
-    const result = FeatureParser.parseFeatureContent(featureContent);
+    const result = featureParser.parseFeatureContent(featureContent);
 
     assert.ok(result);
     assert.strictEqual(result?.feature, "Test");

@@ -49,6 +49,20 @@ export async function run(): Promise<void> {
         console.log(`Loading unit test file: ${path.basename(testFile)}`);
         mocha.addFile(testFile);
       }
+
+      // Load command-builder unit tests
+      const commandBuildersTestsRoot = path.resolve(unitTestsRoot, "command-builders");
+      if (fs.existsSync(commandBuildersTestsRoot)) {
+        const commandBuilderTestFiles = fs
+          .readdirSync(commandBuildersTestsRoot)
+          .filter((file) => file.endsWith(".test.js"))
+          .map((file) => path.resolve(commandBuildersTestsRoot, file));
+
+        for (const testFile of commandBuilderTestFiles) {
+          console.log(`Loading command-builder test file: ${path.basename(testFile)}`);
+          mocha.addFile(testFile);
+        }
+      }
     }
 
     // Load integration tests

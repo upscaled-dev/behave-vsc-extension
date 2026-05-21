@@ -11,11 +11,19 @@ export class TestDiscoveryManager {
   private logger: Logger;
   private config: ExtensionConfig;
 
-  private constructor() {
-    this.logger = Logger.getInstance();
-    this.config = ExtensionConfig.getInstance();
+  constructor(logger?: Logger, config?: ExtensionConfig) {
+    this.logger = logger ?? Logger.getInstance();
+    this.config = config ?? ExtensionConfig.getInstance();
   }
 
+  public static create(logger?: Logger, config?: ExtensionConfig): TestDiscoveryManager {
+    return new TestDiscoveryManager(logger, config);
+  }
+
+  /**
+   * Get the singleton instance of the test discovery manager
+   * @deprecated Use TestDiscoveryManager.create() for new code or inject TestDiscoveryManager via context
+   */
   public static getInstance(): TestDiscoveryManager {
     TestDiscoveryManager.instance ??= new TestDiscoveryManager();
     return TestDiscoveryManager.instance;

@@ -10,7 +10,18 @@ export interface BehaveScenarioResult {
   status: string; // 'passed', 'failed', etc.
 }
 
-export function parseBehaveJsonOutput(jsonOutput: string): BehaveScenarioResult[] {
+export class BehaveJsonParser {
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? Logger.create();
+  }
+
+  public static create(logger?: Logger): BehaveJsonParser {
+    return new BehaveJsonParser(logger);
+  }
+
+  public parseBehaveJsonOutput(jsonOutput: string): BehaveScenarioResult[] {
   try {
     // Extract only the JSON array from the output
     const startIdx = jsonOutput.indexOf('[');
@@ -24,24 +35,24 @@ export function parseBehaveJsonOutput(jsonOutput: string): BehaveScenarioResult[
       if (startIdx !== -1 && lastBracket !== -1 && lastBracket > startIdx) {
         jsonPart = jsonOutput.slice(startIdx, lastBracket + 1);
       } else {
-        Logger.getInstance().error('Could not find JSON array in Behave output', { jsonOutput });
+        this.logger.error('Could not find JSON array in Behave output', { jsonOutput });
         throw new Error('Could not find JSON array in Behave output');
       }
     }
-    Logger.getInstance().info("Extracted Behave JSON part", { jsonPart });
+    this.logger.info("Extracted Behave JSON part", { jsonPart });
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonPart);
     } catch (e) {
-      Logger.getInstance().error("Failed to parse Behave JSON output", { error: e, jsonPart });
+      this.logger.error("Failed to parse Behave JSON output", { error: e, jsonPart });
       throw new Error(`Failed to parse Behave JSON output: ${e}`);
     }
-    Logger.getInstance().info("Parsed Behave JSON array", {
+    this.logger.info("Parsed Behave JSON array", {
       length: Array.isArray(parsed) ? parsed.length : 'not array',
       first: Array.isArray(parsed) && parsed.length > 0 ? parsed[0] : undefined
     });
     if (!Array.isArray(parsed)) {
-      Logger.getInstance().error("Behave JSON output is not an array", { parsed });
+      this.logger.error("Behave JSON output is not an array", { parsed });
       throw new Error("Behave JSON output is not an array");
     }
     const results: BehaveScenarioResult[] = [];
@@ -78,10 +89,16 @@ export function parseBehaveJsonOutput(jsonOutput: string): BehaveScenarioResult[
         results.push({ filePath, lineNumber, name, status });
       }
     }
-    Logger.getInstance().info("Returning parsed scenario results", { results });
+    this.logger.info("Returning parsed scenario results", { results });
     return results;
   } catch (err) {
-    Logger.getInstance().error("Error in parseBehaveJsonOutput", { error: err, input: jsonOutput });
+    this.logger.error("Error in parseBehaveJsonOutput", { error: err, input: jsonOutput });
     throw err;
   }
+  }
+}
+
+// Backward compatibility function
+export function parseBehaveJsonOutput(jsonOutput: string): BehaveScenarioResult[] {
+  return BehaveJsonParser.create().parseBehaveJsonOutput(jsonOutput);
 } 

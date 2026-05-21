@@ -1,4 +1,14 @@
 import * as vscode from "vscode";
+import { Logger } from "../utils/logger";
+import { ExtensionConfig } from "../core/extension-config";
+import { TestExecutor } from "../core/test-executor";
+import { TestDiscoveryManager } from "../core/test-discovery-manager";
+import { TestOrganizationManager } from "../core/test-organization";
+import { FeatureParser } from "../parsers/feature-parser";
+import { BehaveJsonParser } from "../utils/behave-json-parser";
+import { PytestResultParser } from "../utils/pytest-result-parser";
+import { CucumberJsonParser } from "../utils/cucumber-json-parser";
+import { TestItemMapping } from "../utils/test-item-mapping";
 
 /**
  * Represents a parsed feature file with its scenarios
@@ -24,6 +34,11 @@ export interface Scenario {
   isScenarioOutline: boolean;
   outlineLineNumber?: number; // Line number of the parent scenario outline (for examples)
   featureLineNumber?: number; // Line number of the Feature: keyword
+  examplesBlockName?: string; // Name of the Examples block this example belongs to ("Examples: High Value Amounts")
+  examplesBlockTags?: string[]; // Tags declared on the Examples block (apply only to examples in that block)
+  examplesBlockLineNumber?: number; // Line number of the parent Examples block
+  backgroundSteps?: string[]; // Steps from the enclosing Background (feature- or rule-level)
+  ruleName?: string; // Name of the Rule this scenario belongs to (Gherkin 6+)
 }
 
 /**
@@ -34,8 +49,7 @@ export interface BehaveTestRunnerConfig {
   workingDirectory: string;
   autoDiscoverTests: boolean;
   enableCodeLens: boolean;
-  enableTestExplorer: boolean;
-  priority: string;
+
   testFilePattern: string;
   parallelExecution: boolean;
   maxParallelProcesses: number;
@@ -253,4 +267,21 @@ export interface TestItemMetadata {
   tags?: string[];
   isFeatureFile: boolean;
   isScenarioOutline: boolean;
+}
+
+/**
+ * Context object containing all dependencies for the Behave Test Runner extension
+ */
+export interface BehaveExtensionContext {
+  logger: Logger;
+  config: ExtensionConfig;
+  testExecutor: TestExecutor;
+  discoveryManager: TestDiscoveryManager;
+  organizationManager: TestOrganizationManager;
+  featureParser: FeatureParser;
+  behaveJsonParser: BehaveJsonParser;
+  pytestResultParser: PytestResultParser;
+  cucumberJsonParser: CucumberJsonParser;
+  testItemMapping: TestItemMapping;
+  commandBuilder: import("../core/command-builders/command-builder-interface").CommandBuilder;
 }

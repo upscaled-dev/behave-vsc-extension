@@ -11,7 +11,7 @@ suite("BehaveTestProvider Integration", () => {
       "integration",
       "Integration"
     );
-    testProvider = new BehaveTestProvider(testController);
+    testProvider = BehaveTestProvider.create(testController);
   });
 
   teardown(() => {
@@ -61,7 +61,7 @@ suite("BehaveTestProvider Integration", () => {
   });
 
   test("TestExecutor is properly initialized", () => {
-    const testExecutor = testProvider["testExecutor"];
+    const testExecutor = testProvider["context"]["testExecutor"];
     assert.ok(testExecutor, "TestExecutor should be initialized");
     assert.ok(
       typeof testExecutor.runScenario === "function",

@@ -1,6 +1,6 @@
 # Behave Test Runner
 
-A VS Code extension for discovering, running, and debugging [Behave](https://behave.readthedocs.io/) tests with full integration into the VS Code testing framework.
+A VS Code extension for discovering, running, and debugging [Behave](https://behave.readthedocs.io/) and [pytest-bdd](https://pytest-bdd.readthedocs.io/) tests with full integration into the VS Code testing framework.
 
 ## Features
 
@@ -17,6 +17,7 @@ A VS Code extension for discovering, running, and debugging [Behave](https://beh
 - 🔄 **Auto-refresh**: Automatically updates when feature files change
 - 🚀 **Parallel Execution**: Run tests in parallel for faster execution
 - 🤝 **Extension Compatibility**: Designed to work seamlessly with Cucumber (Gherkin) Full Support
+- 🔧 **Multi-Framework Support**: Support for both Behave and pytest-bdd frameworks with automatic detection
 
 ## Installation
 
@@ -41,13 +42,16 @@ npm run package
 
 ### Prerequisites
 
-- Python with Behave installed (`pip install behave`)
+- Python with your preferred BDD framework installed:
+  - **Behave**: `pip install behave` 
+  - **pytest-bdd**: `pip install pytest-bdd`
 - VS Code 1.99.0 or later
 
 ### Basic Usage
 
 1. **Open a workspace** containing `.feature` files
-2. **Discover tests** by running the "Behave: Discover Tests" command
+2. **Framework Detection**: The extension automatically detects your BDD framework (Behave or pytest-bdd) based on configuration files
+3. **Discover tests** by running the "Behave: Discover Tests" command
 3. **View tests** in the Test Explorer (Ctrl+Shift+P → "Testing: Focus on Test Explorer View")
 4. **Run tests** by clicking the play button next to any test
 5. **Debug tests** by clicking the debug button next to any test
@@ -110,6 +114,46 @@ When you open a `.feature` file, you'll see inline buttons above each scenario:
 
 > **Note**: Right click on play button will give additional options like debugging test
 
+### Step Definition Navigation
+
+Click on any step in a `.feature` file and press <kbd>F12</kbd> (or right-click → "Go to Definition") to jump to the matching Python `@given`/`@when`/`@then`/`@step` decorator.
+
+Supports both styles:
+- **behave**: `@given('I have <count> users')`
+- **pytest-bdd**: `@given(parsers.parse('I enter {name}'))` and `@then(parsers.re(r'^count is (\d+)$'))`
+
+By default the extension searches `features/steps/**/*.py`, `tests/**/*.py`, and `tests/steps/**/*.py`. Override via `behaveTestRunner.stepDefinitionPaths`:
+
+```jsonc
+{
+  "behaveTestRunner.stepDefinitionPaths": [
+    "src/acceptance/steps/**/*.py",
+    "tests/bdd/steps/**/*.py"
+  ]
+}
+```
+
+If you prefer the **Cucumber (Gherkin) Full Support** extension's navigation, disable ours to avoid duplicate results:
+
+```jsonc
+{ "behaveTestRunner.enableStepDefinitionNavigation": false }
+```
+
+### Recommended companion settings (Cucumber Full Support)
+
+This extension is designed to coexist with [Cucumber (Gherkin) Full Support](https://marketplace.visualstudio.com/items?itemName=alexkrechik.cucumberautocomplete) (auto-installed via `extensionPack`). To get its syntax highlighting and autocomplete on Python step defs, add to your workspace `.vscode/settings.json`:
+
+```jsonc
+{
+  "cucumberautocomplete.steps": [
+    "features/steps/**/*.py",
+    "tests/**/*.py"
+  ],
+  "cucumberautocomplete.syncfeatures": "features/**/*.feature",
+  "cucumberautocomplete.strictGherkinCompletion": true
+}
+```
+
 ### Commands
 
 | Command                              | Description                                    |
@@ -134,8 +178,8 @@ When you open a `.feature` file, you'll see inline buttons above each scenario:
 | `behaveTestRunner.autoDiscoverTests`    | `true`           | Automatically discover tests on startup                                                              |
 | `behaveTestRunner.testFilePattern`      | `"**/*.feature"` | Glob pattern for test file discovery                                                                 |
 | `behaveTestRunner.enableCodeLens`       | `true`           | Enable CodeLens buttons on feature files (disable if conflicting with other extensions)              |
-| `behaveTestRunner.enableTestExplorer`   | `true`           | Enable Test Explorer integration (disable if conflicting with other test explorers)                  |
-| `behaveTestRunner.priority`             | `"normal"`       | Extension priority for handling feature files (use 'low' if other extensions should take precedence) |
+| `behaveTestRunner.enableStepDefinitionNavigation` | `true` | Enable "Go to Definition" from a Gherkin step to its Python `@given`/`@when`/`@then`                |
+| `behaveTestRunner.stepDefinitionPaths`  | see below        | Globs for Python files containing step definitions (used by step navigation)                         |
 | `behaveTestRunner.parallelExecution`    | `false`          | Enable parallel execution of feature files                                                           |
 | `behaveTestRunner.maxParallelProcesses` | `4`              | Maximum number of parallel processes for test execution                                              |
 | `behaveTestRunner.outputFormat`         | `"pretty"`       | Output format for behave test results (pretty, plain, json, junit, progress, steps)                  |
@@ -271,6 +315,82 @@ The `priority` setting determines which extension takes precedence when multiple
 - **`"normal"`**: Standard priority
 - **`"high"`**: Take precedence over other extensions
 
+### Framework Selection Best Practices
+
+⚠️ **Important**: A project should use **only one BDD framework** (either behave or pytest-bdd) to avoid conflicts.
+
+#### **Automatic Detection Priority**
+
+1. **Explicit Configuration**: Framework with configuration files takes precedence
+   - `behave.ini`, `.behaverc` → behave
+   - `pytest.ini` with pytest-bdd → pytest-bdd
+
+2. **File Pattern Fallback**: When no explicit config found
+   - `.feature` files + Python test files → **defaults to behave**
+
+3. **Default**: Always behave (for backward compatibility)
+
+#### **Conflict Prevention**
+
+The extension will warn you if:
+- ✅ **Multiple framework configs detected**: Remove unused framework configuration
+- ✅ **Ambiguous file patterns**: Add explicit framework configuration
+- ✅ **Mixed test files**: Choose one framework and organize accordingly
+
+#### **Manual Override**
+
+Always use manual selection for complex projects:
+
+```json
+{
+  "behaveTestRunner.framework": "behave",           // Explicit selection
+  "behaveTestRunner.autoDetectFramework": false     // Disable auto-detection
+}
+```
+
+## Configuration
+
+The extension supports various configuration options for customizing behavior:
+
+### Framework Selection
+
+The extension automatically detects your BDD framework, but you can also configure it manually:
+
+```json
+{
+  "behaveTestRunner.framework": "behave",              // "behave" or "pytest-bdd"
+  "behaveTestRunner.autoDetectFramework": true,        // Enable automatic framework detection
+  "behaveTestRunner.behaveCommand": "behave",          // Command for Behave framework
+  "behaveTestRunner.pytestCommand": "pytest",          // Command for pytest-bdd framework
+  "behaveTestRunner.pytestBddFilePattern": "**/*_test.py"  // File pattern for pytest-bdd tests
+}
+```
+
+### Framework Auto-Detection
+
+The extension automatically detects your framework based on:
+
+- **Behave**: Looks for `.behaverc`, `behave.ini`, or behave configuration in `setup.cfg`/`pyproject.toml`
+- **pytest-bdd**: Looks for `pytest.ini`, `pytest-bdd` in `pyproject.toml`, or pytest-bdd imports
+
+### General Settings
+
+```json
+{
+  "behaveTestRunner.workingDirectory": "",             // Working directory for tests
+  "behaveTestRunner.autoDiscoverTests": true,          // Auto-discover tests on startup
+  "behaveTestRunner.testFilePattern": "**/*.feature",  // Pattern for feature files
+  "behaveTestRunner.enableCodeLens": true,             // Enable CodeLens buttons
+  "behaveTestRunner.enableTestExplorer": true,         // Enable Test Explorer integration
+  "behaveTestRunner.priority": "normal",               // Extension priority
+  "behaveTestRunner.parallelExecution": false,         // Enable parallel execution
+  "behaveTestRunner.maxParallelProcesses": 4,          // Max parallel processes
+  "behaveTestRunner.outputFormat": "pretty",           // Output format
+  "behaveTestRunner.tags": "",                         // Default tags filter
+  "behaveTestRunner.dryRun": false                     // Enable dry run mode
+}
+```
+
 ## Project Structure
 
 ```
@@ -339,8 +459,6 @@ The extension includes comprehensive tests:
 - **Parser Tests**: Test Gherkin parsing
 - **Execution Tests**: Test test execution
 
-**Current Test Status**: 111 tests passing, 1 failing (33 lint warnings in source files only)
-
 Run tests with:
 
 ```bash
@@ -378,9 +496,12 @@ npm run test:execution     # Run execution tests only
 
 **Tests not running:**
 
-- Verify Behave is installed (`behave --version`)
-- Check the `behaveCommand` setting
+- Verify your BDD framework is installed:
+  - **Behave**: `behave --version`
+  - **pytest-bdd**: `pytest --version` and check for pytest-bdd plugin
+- Check the framework command settings (`behaveCommand` or `pytestCommand`)
 - Ensure the working directory is correct
+- Verify the framework auto-detection or set it manually
 
 **Debug not working:**
 
@@ -410,6 +531,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a list of changes and version history.
 ## Acknowledgments
 
 - [Behave](https://behave.readthedocs.io/) - Python BDD framework
+- [pytest-bdd](https://pytest-bdd.readthedocs.io/) - pytest plugin for BDD
 - [VS Code Extension API](https://code.visualstudio.com/api) - Extension development framework
 - [Gherkin](https://cucumber.io/docs/gherkin/) - BDD syntax specification
 - [Cucumber (Gherkin) Full Support](https://marketplace.visualstudio.com/items?itemName=alexkrechik.cucumberautocomplete) - VS Code extension for Gherkin syntax highlighting and autocomplete

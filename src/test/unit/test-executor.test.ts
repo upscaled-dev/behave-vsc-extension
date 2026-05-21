@@ -655,14 +655,14 @@ suite('CommandManager TestItemMap', () => {
 });
 
 test('Should run only the specific scenario outline example from CodeLens', async () => {
-  const manager = CommandManager.getInstance();
+  const manager = CommandManager.create();
   // Spy on testExecutor.runScenario
   let calledWith: any = null;
-  manager['testExecutor'].runScenario = async (opts: any) => {
+  manager['context']['testExecutor'].runScenario = async (opts: any) => {
     calledWith = opts;
     return Promise.resolve();
   };
-  manager['testExecutor'].runScenarioWithOutput = async (opts: any) => {
+  manager['context']['testExecutor'].runScenarioWithOutput = async (opts: any) => {
     calledWith = opts;
     return { success: true, duration: 1, output: '', error: "" };
   };
@@ -676,10 +676,10 @@ test('Should run only the specific scenario outline example from CodeLens', asyn
 });
 
 test('Should debug only the specific scenario outline example from CodeLens with quoted name', async () => {
-  const manager = CommandManager.getInstance();
+  const manager = CommandManager.create();
   // Spy on testExecutor.debugScenario
   let calledWith: any = null;
-  manager['testExecutor'].debugScenario = async (opts: any) => {
+  manager['context']['testExecutor'].debugScenario = async (opts: any) => {
     calledWith = opts;
     return Promise.resolve();
   };

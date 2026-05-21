@@ -14,7 +14,7 @@ suite("BehaveTestProvider Unit Tests", () => {
     );
 
     // Create test provider with the test controller
-    testProvider = new BehaveTestProvider(testController);
+    testProvider = BehaveTestProvider.create(testController);
   });
 
   teardown(() => {
@@ -70,7 +70,7 @@ suite("BehaveTestProvider Unit Tests", () => {
   });
 
   test("TestExecutor should be properly initialized", () => {
-    const testExecutor = testProvider["testExecutor"];
+    const testExecutor = testProvider["context"]["testExecutor"];
     assert.ok(testExecutor, "TestExecutor should be initialized");
     assert.ok(
       typeof testExecutor.runScenario === "function",

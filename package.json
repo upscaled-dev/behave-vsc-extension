@@ -2,7 +2,7 @@
   "name": "behave-test-runner",
   "displayName": "Behave Test Runner",
   "description": "VS Code extension for Behave test discovery and running",
-  "version": "1.1.70",
+  "version": "1.2.23",
   "icon": "icon.png",
   "publisher": "upscaled-dev",
   "license": "MIT",
@@ -41,6 +41,9 @@
     "onCommand:behaveTestRunner.refreshTests",
     "onCommand:behaveTestRunner.runAllTests"
   ],
+  "extensionPack": [
+    "alexkrechik.cucumberautocomplete"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
@@ -71,21 +74,6 @@
           "type": "boolean",
           "default": true,
           "description": "Enable CodeLens buttons on feature files (disable if conflicting with other extensions)"
-        },
-        "behaveTestRunner.enableTestExplorer": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Test Explorer integration (disable if conflicting with other test explorers)"
-        },
-        "behaveTestRunner.priority": {
-          "type": "string",
-          "enum": [
-            "high",
-            "normal",
-            "low"
-          ],
-          "default": "normal",
-          "description": "Extension priority for handling feature files (use 'low' if other extensions should take precedence)"
         },
         "behaveTestRunner.parallelExecution": {
           "type": "boolean",
@@ -121,6 +109,47 @@
           "type": "boolean",
           "default": false,
           "description": "Enable dry run mode to see what tests would be executed without running them"
+        },
+        "behaveTestRunner.framework": {
+          "type": "string",
+          "enum": [
+            "behave",
+            "pytest-bdd"
+          ],
+          "default": "behave",
+          "description": "BDD framework to use for test execution (behave or pytest-bdd)"
+        },
+        "behaveTestRunner.autoDetectFramework": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically detect the BDD framework based on project configuration files"
+        },
+        "behaveTestRunner.pytestCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Command to run pytest for pytest-bdd framework (e.g., 'pytest', 'python -m pytest'). Leave empty for auto-detection."
+        },
+        "behaveTestRunner.pytestBddFilePattern": {
+          "type": "string",
+          "default": "**/*_test.py",
+          "description": "Glob pattern for pytest-bdd test file discovery"
+        },
+        "behaveTestRunner.stepDefinitionPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "features/steps/**/*.py",
+            "tests/**/*.py",
+            "tests/steps/**/*.py"
+          ],
+          "description": "Glob patterns for Python files containing @given/@when/@then step definitions. Used for 'Go to Definition' navigation from steps in .feature files."
+        },
+        "behaveTestRunner.enableStepDefinitionNavigation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable 'Go to Definition' from a Gherkin step to its Python step definition. Disable if conflicting with another extension."
         }
       }
     },
@@ -355,46 +384,49 @@
     "test:logger": "vscode-test --grep \"Logger Unit Tests\"",
     "test:commands": "vscode-test --grep \"CommandManager Unit Tests\"",
     "test:verbose": "vscode-test --verbose",
-    "test:coverage": "npm test && echo 'Coverage report would be generated here'",
+    "test:coverage": "node scripts/test/coverage.js",
     "test:runner": "node scripts/test/run-tests.js",
+    "test:pytest-bdd": "node scripts/test-pytest-bdd.js",
     "clean": "rimraf dist out",
     "build": "npm run clean && npm run compile",
     "dev": "npm run watch",
-    "version": "standard-version",
-    "release": "standard-version",
-    "release:patch": "standard-version --release-as patch",
-    "release:minor": "standard-version --release-as minor",
-    "release:major": "standard-version --release-as major",
+    "version": "commit-and-tag-version",
+    "release": "commit-and-tag-version",
+    "release:patch": "commit-and-tag-version --release-as patch",
+    "release:minor": "commit-and-tag-version --release-as minor",
+    "release:major": "commit-and-tag-version --release-as major",
     "package:vsix": "npm run package && vsce package --no-yarn --out dist/behave-test-runner-$(node -p \"require('./package.json').version\").vsix",
     "release:vsix": "npm run release && npm run package:vsix",
     "docs": "typedoc --out docs src",
     "docs:watch": "typedoc --out docs --watch src",
     "docs:serve": "typedoc --out docs --serve src",
-    "prepare": "husky install"
+    "prepare": "husky",
+    "coverage": "node scripts/test/coverage.js"
   },
   "devDependencies": {
-    "@commitlint/cli": "^18.0.0",
-    "@commitlint/config-conventional": "^18.0.0",
-    "@types/chai": "^5.2.2",
+    "@commitlint/cli": "^21.0.1",
+    "@commitlint/config-conventional": "^21.0.1",
+    "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
+    "@types/node": "^25.8.0",
     "@types/vscode": "^1.99.0",
-    "@typescript-eslint/eslint-plugin": "^8.31.1",
-    "@typescript-eslint/parser": "^8.31.1",
-    "@vscode/test-cli": "^0.0.11",
+    "@typescript-eslint/eslint-plugin": "^8.59.3",
+    "@typescript-eslint/parser": "^8.59.3",
+    "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
-    "chai": "^5.2.1",
+    "c8": "^11.0.0",
+    "chai": "^5.3.3",
     "commitizen": "^4.3.0",
     "cz-conventional-changelog": "^3.3.0",
-    "esbuild": "^0.25.3",
-    "eslint": "^9.25.1",
-    "husky": "^8.0.3",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.0",
+    "husky": "^9.1.7",
     "npm-run-all": "^4.1.5",
-    "rimraf": "^5.0.10",
-    "standard-version": "^9.5.0",
-    "typedoc": "^0.28.7",
-    "typedoc-plugin-markdown": "^4.7.1",
-    "typescript": "^5.8.3"
+    "rimraf": "^6.1.3",
+    "commit-and-tag-version": "^12.7.3",
+    "typedoc": "^0.28.19",
+    "typedoc-plugin-markdown": "^4.11.0",
+    "typescript": "^6.0.3"
   },
   "config": {
     "commitizen": {

@@ -5,6 +5,7 @@ import * as fs from "fs";
 import { FeatureParser } from "../parsers/feature-parser";
 
 suite("Test Execution Test Suite", () => {
+  const featureParser = FeatureParser.create();
   // Test running tests at feature level
   test("Should run tests at feature level", () => {
     // Create a test feature file
@@ -26,7 +27,7 @@ suite("Test Execution Test Suite", () => {
     const tempFile = createTempFile(testFeature);
     try {
       // Test that we can parse the feature
-      const parsed = FeatureParser.parseFeatureFile(tempFile);
+      const parsed = featureParser.parseFeatureFile(tempFile);
       assert.ok(parsed, "Should parse feature file");
       assert.strictEqual(parsed.feature, "Test Execution Feature");
       assert.strictEqual(parsed.scenarios.length, 2);
@@ -72,7 +73,7 @@ suite("Test Execution Test Suite", () => {
 
     const tempFile = createTempFile(testFeature);
     try {
-      const parsed = FeatureParser.parseFeatureFile(tempFile);
+      const parsed = featureParser.parseFeatureFile(tempFile);
       assert.ok(parsed, "Should parse feature file");
 
       // Test scenario-level command construction
@@ -129,7 +130,7 @@ suite("Test Execution Test Suite", () => {
 
     const tempFile = createTempFile(testFeature);
     try {
-      const parsed = FeatureParser.parseFeatureFile(tempFile);
+      const parsed = featureParser.parseFeatureFile(tempFile);
       assert.ok(parsed, "Should parse feature file");
 
       // Test debug command construction
@@ -299,11 +300,11 @@ suite("Test Execution Test Suite", () => {
       );
 
       // Test error handling in parsing
-      const parsed = FeatureParser.parseFeatureFile(tempFile);
+      const parsed = featureParser.parseFeatureFile(tempFile);
       assert.ok(parsed, "Should parse valid file");
 
       // Test parsing of non-existent file
-      const invalidParsed = FeatureParser.parseFeatureFile(
+      const invalidParsed = featureParser.parseFeatureFile(
         "/nonexistent/file.feature"
       );
       assert.strictEqual(
@@ -374,7 +375,7 @@ suite("Test Execution Test Suite", () => {
 
       const tempFile = createTempFile(testFeature);
       try {
-        const parsed = FeatureParser.parseFeatureFile(tempFile);
+        const parsed = featureParser.parseFeatureFile(tempFile);
         assert.ok(parsed, "Should parse feature file");
 
         // Test that we can create test items for discovered tests
