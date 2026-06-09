@@ -1,3 +1,4 @@
+import * as path from "path";
 import { Scenario, TestGroup, TestOrganizationStrategy } from "../types";
 import { Logger } from "../utils/logger";
 
@@ -182,7 +183,7 @@ export class FileBasedOrganization implements TestOrganizationStrategy {
 
       // Create groups for each file
       for (const [filePath, fileScenarios] of fileGroups) {
-        const fileName = filePath.split("/").pop() ?? filePath;
+        const fileName = path.basename(filePath);
         groups.push({
           id: `file:${filePath}`,
           label: fileName,
@@ -379,7 +380,7 @@ export class FeatureBasedOrganization implements TestOrganizationStrategy {
     }
     const groups: TestGroup[] = [];
     for (const [filePath, fileScenarios] of fileGroups) {
-      const fileName = filePath.split("/").pop() ?? filePath;
+      const fileName = path.basename(filePath);
       groups.push({
         id: `feature:${filePath}`,
         label: fileName,

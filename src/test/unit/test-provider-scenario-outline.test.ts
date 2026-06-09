@@ -223,9 +223,11 @@ suite("Test Provider Scenario Outline Parent-Child Tests", () => {
     // Arrange
     testProvider.setOrganizationStrategy(new FeatureBasedOrganization());
     
-    // Use an existing feature file that we know has scenario outlines
+    // Use an existing feature file that we know has scenario outlines. Resolve
+    // relative to this compiled test (out/test/unit) rather than cwd, which is
+    // not the repo root in the Windows VS Code test host.
     const path = require('path');
-    const existingFeatureFile = path.join(process.cwd(), 'features', 'advanced-example.feature');
+    const existingFeatureFile = path.join(__dirname, '..', '..', '..', 'features', 'advanced-example.feature');
 
     try {
       // Act - Add the feature file to the test controller

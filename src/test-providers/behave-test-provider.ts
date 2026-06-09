@@ -1527,7 +1527,7 @@ export class BehaveTestProvider {
     }
 
     const fullFeaturePath = parentMatch[1];
-    const featureFilename = fullFeaturePath?.split('/').pop() ?? "";
+    const featureFilename = fullFeaturePath ? path.basename(fullFeaturePath) : "";
 
     for (const [, child] of Array.from(parent.children)) {
       // Find the cache key that matches this child by line number
