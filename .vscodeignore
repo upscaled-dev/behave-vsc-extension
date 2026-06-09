@@ -43,6 +43,29 @@ commitlint.config.js
 scripts/
 *.sh
 
+# Coverage & test reports
+coverage/
+.nyc_output/
+c8.config.json
+.pytest_cache/
+
+# Generated API documentation
+docs/
+typedoc.json
+
+# Test fixtures, helpers & generated outputs (dev only)
+features/
+test-output*.json
+cucumber-output.json
+test-cucumber-*.js
+
+# Lint/commit/python tooling config (dev only)
+commitlint.config.mjs
+pyproject.toml
+
+# Previously packaged artifacts
+*.vsix
+
 # IDE files
 .vscode-test/
 .vscode-test.json

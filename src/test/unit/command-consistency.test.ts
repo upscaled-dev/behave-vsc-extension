@@ -79,7 +79,12 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     // Set the context to enable CommandBuilder usage
     testExecutor.setContext(mockContext);
 
-    // Mock executeCommandWithOutput to capture commands
+    // Behave's WithOutput methods now run once in the terminal and read results
+    // from a JSON file written by behave. Stub that file read so tests don't poll
+    // the real filesystem; individual tests override it when they need results.
+    (testExecutor as any).readBehaveResults = async () => ({ output: '[]', returnCode: 0 });
+
+    // executeCommandWithOutput is only used by non-behave (e.g. pytest-bdd) now.
     (testExecutor as any).executeCommandWithOutput = async (command: string, _workingDir: string) => {
       outputCommands.push(command);
       return {
@@ -91,7 +96,21 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     };
   });
 
-  test('runScenario and runScenarioWithOutput should generate identical base commands', async () => {
+  /** The single behave invocation that captures JSON (the one with the json formatter). */
+  const captureCommand = (): string | undefined =>
+    executedCommands.find((c) => c.includes('-f json'));
+  /** The display-only behave invocation (no json formatter). */
+  const displayCommand = (): string | undefined =>
+    executedCommands.find((c) => !c.includes('-f json'));
+  /** Strip the formatter section + exit-code marker so only the base command remains. */
+  const normalizeCommand = (cmd: string): string =>
+    cmd
+      .replace(/\s-f json -o "[^"]*" -f pretty -o "[^"]*" -f pretty/, '')
+      .replace(/\s;\s*echo .*$/, '')
+      .replace(/\s--format=\w+/, '')
+      .trim();
+
+  test('runScenario displays natively; runScenarioWithOutput runs once with json file + pretty', async () => {
     const options: TestExecutionOptions = {
       filePath: '/test/features/test.feature',
       lineNumber: 5,
@@ -105,41 +124,30 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     await testExecutor.runScenario(options);
     await testExecutor.runScenarioWithOutput(options);
 
-    // Verify commands were executed
-    assert.equal(executedCommands.length, 1, 'runScenario should execute one command');
-    assert.equal(outputCommands.length, 1, 'runScenarioWithOutput should execute one command');
+    // Both run in the terminal now (single behave run each); spawn is not used.
+    assert.equal(outputCommands.length, 0, 'behave should not use executeCommandWithOutput');
 
-    const displayCommand = executedCommands[0];
-    const outputCommand = outputCommands[0];
+    const display = displayCommand() ?? '';
+    const capture = captureCommand() ?? '';
+    assert.isNotEmpty(display, 'Display command should be defined');
+    assert.isNotEmpty(capture, 'Capture command should be defined');
 
-    assert.isDefined(displayCommand, 'Display command should be defined');
-    assert.isDefined(outputCommand, 'Output command should be defined');
+    // The capture run adds three formatters: json -> file, pretty -> file
+    // (for the Test Results panel), pretty -> stdout (native terminal display).
+    assert.include(capture, '-f json -o ');
+    assert.include(capture, '-f pretty');
+    assert.notInclude(display, '-f json');
 
-    // The output command should be the display command + "--format=json"
-    let expectedOutputCommand = displayCommand;
-    if (displayCommand.includes('--format=pretty')) {
-      expectedOutputCommand = displayCommand.replace('--format=pretty', '--format=json');
-    } else {
-      expectedOutputCommand = displayCommand + ' --format=json';
+    // Both commands share the same core target/name/tags.
+    for (const cmd of [display, capture]) {
+      assert.include(cmd, '/test/features/test.feature:5');
+      assert.include(cmd, '--name="Test Scenario"');
+      assert.include(cmd, '--tags="@smoke"');
+      assert.include(cmd, '--no-skipped');
     }
-    
-    assert.equal(outputCommand, expectedOutputCommand, 
-      'runScenarioWithOutput should generate the same command as runScenario, but with --format=json');
-
-    // Verify both commands contain the same core elements
-    assert.include(displayCommand, '/test/features/test.feature:5');
-    assert.include(displayCommand, '--name="Test Scenario"');
-    assert.include(displayCommand, '--tags="@smoke"');
-    assert.include(displayCommand, '--no-skipped');
-
-    assert.include(outputCommand, '/test/features/test.feature:5');
-    assert.include(outputCommand, '--name="Test Scenario"');
-    assert.include(outputCommand, '--tags="@smoke"');
-    assert.include(outputCommand, '--no-skipped');
-    assert.include(outputCommand, '--format=json');
   });
 
-  test('runFeatureFile and runFeatureFileWithOutput should generate identical base commands', async () => {
+  test('runFeatureFile displays natively; runFeatureFileWithOutput runs once with json file + pretty', async () => {
     const options: FeatureExecutionOptions = {
       filePath: '/test/features/test.feature',
       tags: '@regression',
@@ -151,36 +159,22 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     await testExecutor.runFeatureFile(options);
     await testExecutor.runFeatureFileWithOutput(options);
 
-    // Verify commands were executed
-    assert.equal(executedCommands.length, 1, 'runFeatureFile should execute one command');
-    assert.equal(outputCommands.length, 1, 'runFeatureFileWithOutput should execute one command');
+    assert.equal(outputCommands.length, 0, 'behave should not use executeCommandWithOutput');
 
-    const displayCommand = executedCommands[0];
-    const outputCommand = outputCommands[0];
+    const display = displayCommand() ?? '';
+    const capture = captureCommand() ?? '';
+    assert.isNotEmpty(display, 'Display command should be defined');
+    assert.isNotEmpty(capture, 'Capture command should be defined');
 
-    assert.isDefined(displayCommand, 'Display command should be defined');
-    assert.isDefined(outputCommand, 'Output command should be defined');
+    assert.include(capture, '-f json -o ');
+    assert.include(capture, '-f pretty');
+    assert.notInclude(display, '-f json');
 
-    // The output command should be the display command + "--format=json"
-    let expectedOutputCommand = displayCommand;
-    if (displayCommand.includes('--format=pretty')) {
-      expectedOutputCommand = displayCommand.replace('--format=pretty', '--format=json');
-    } else {
-      expectedOutputCommand = displayCommand + ' --format=json';
+    for (const cmd of [display, capture]) {
+      assert.include(cmd, '/test/features/test.feature');
+      assert.include(cmd, '--tags="@regression"');
+      assert.include(cmd, '--no-skipped');
     }
-    
-    assert.equal(outputCommand, expectedOutputCommand, 
-      'runFeatureFileWithOutput should generate the same command as runFeatureFile, but with --format=json');
-
-    // Verify both commands contain the same core elements
-    assert.include(displayCommand, '/test/features/test.feature');
-    assert.include(displayCommand, '--tags="@regression"');
-    assert.include(displayCommand, '--no-skipped');
-
-    assert.include(outputCommand, '/test/features/test.feature');
-    assert.include(outputCommand, '--tags="@regression"');
-    assert.include(outputCommand, '--no-skipped');
-    assert.include(outputCommand, '--format=json');
   });
 
   test('Both methods should use CommandBuilder when available', async () => {
@@ -218,16 +212,14 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     await testExecutor.runScenario(options);
     await testExecutor.runScenarioWithOutput(options);
 
-    const displayCommand = executedCommands[0];
-    const outputCommand = outputCommands[0];
+    const display = displayCommand() ?? '';
+    const capture = captureCommand() ?? '';
 
-    assert.isDefined(displayCommand, 'Display command should be defined');
-    assert.isDefined(outputCommand, 'Output command should be defined');
+    assert.isNotEmpty(display, 'Display command should be defined');
+    assert.isNotEmpty(capture, 'Capture command should be defined');
 
-    // Remove --format differences for comparison
-    const normalizeCommand = (cmd: string) => cmd.replace(/--format=\w+/, '').trim();
-    
-    assert.equal(normalizeCommand(displayCommand), normalizeCommand(outputCommand),
+    // Strip the formatter section so only the shared base command remains.
+    assert.equal(normalizeCommand(display), normalizeCommand(capture),
       'Base commands should be identical for scenario outlines');
   });
 
@@ -257,16 +249,8 @@ suite('Command Consistency Tests - Prevent Regression', () => {
       cucumberJsonParser
     );
 
-    // Mock executeCommandWithOutput for fallback executor
-    (fallbackExecutor as any).executeCommandWithOutput = async (command: string, _workingDir: string) => {
-      outputCommands.push(command);
-      return {
-        success: true,
-        output: '[]',
-        error: '',
-        returnCode: 0,
-      };
-    };
+    // Stub the JSON-file read so the fallback behave run doesn't poll the FS.
+    (fallbackExecutor as any).readBehaveResults = async () => ({ output: '[]', returnCode: 0 });
 
     const options: TestExecutionOptions = {
       filePath: '/test/features/test.feature',
@@ -278,17 +262,14 @@ suite('Command Consistency Tests - Prevent Regression', () => {
     await fallbackExecutor.runScenario(options);
     await fallbackExecutor.runScenarioWithOutput(options);
 
-    const displayCommand = executedCommands[0];
-    const outputCommand = outputCommands[0];
+    const display = displayCommand() ?? '';
+    const capture = captureCommand() ?? '';
 
-    assert.isDefined(displayCommand, 'Display command should be defined');
-    assert.isDefined(outputCommand, 'Output command should be defined');
+    assert.isNotEmpty(display, 'Display command should be defined');
+    assert.isNotEmpty(capture, 'Capture command should be defined');
 
-    // Normalize commands by removing format differences
-    const normalizeCommand = (cmd: string) => cmd.replace(/--format=\w+/, '').trim();
-    
-    assert.equal(normalizeCommand(displayCommand), normalizeCommand(outputCommand),
-      'Fallback commands should be identical except for output format');
+    assert.equal(normalizeCommand(display), normalizeCommand(capture),
+      'Fallback commands should be identical except for the formatter section');
   });
 
   test('Regression Test: Individual scenarios should not be marked as skipped due to command mismatch', async () => {
@@ -299,31 +280,20 @@ suite('Command Consistency Tests - Prevent Regression', () => {
       tags: '@unit',
     };
 
-    // Mock successful execution with proper JSON output
-    (testExecutor as any).executeCommandWithOutput = async (command: string, _workingDir: string) => {
-      outputCommands.push(command);
-      
-      // Return realistic behave JSON output
-      const jsonOutput = JSON.stringify([{
-        filename: '/test/features/test.feature',
-        elements: [{
-          type: 'scenario',
-          name: 'Individual Scenario',
-          line: 20,
-          status: 'passed',
-          steps: [{
-            result: { status: 'passed' }
-          }]
+    // Behave reads results from the JSON file; stub it with realistic output.
+    const jsonOutput = JSON.stringify([{
+      filename: '/test/features/test.feature',
+      elements: [{
+        type: 'scenario',
+        name: 'Individual Scenario',
+        line: 20,
+        status: 'passed',
+        steps: [{
+          result: { status: 'passed' }
         }]
-      }]);
-      
-      return {
-        success: true,
-        output: jsonOutput,
-        error: '',
-        returnCode: 0,
-      };
-    };
+      }]
+    }]);
+    (testExecutor as any).readBehaveResults = async () => ({ output: jsonOutput, returnCode: 0 });
 
     // Execute scenario with output capture
     const result = await testExecutor.runScenarioWithOutput(options);

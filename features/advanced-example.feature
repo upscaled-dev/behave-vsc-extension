@@ -40,6 +40,13 @@ Feature: Advanced Test Examples
       | 50         | 5                 |
       | 100        | 10                |
 
+    @check
+    Examples:
+      | user_count | max_response_time |
+      | 1         | 2                 |
+      | 2         | 5                 |
+      | 3        | 10                |
+
   @security @authentication
   Scenario: Security authentication test
     Given I am an unauthorized user

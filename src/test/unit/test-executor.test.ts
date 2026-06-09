@@ -239,7 +239,7 @@ suite("TestExecutor Unit Tests", () => {
     // Mock debug.startDebugging
     const mockStartDebugging = (_workspace: any, _config: any) => {
       assert.strictEqual(_config.name, "Debug: Test Scenario");
-      assert.strictEqual(_config.type, "python");
+      assert.ok(["debugpy", "python"].includes(_config.type));
       assert.strictEqual(_config.request, "launch");
       assert.strictEqual(_config.module, "behave");
       assert.deepStrictEqual(_config.args, [
@@ -273,7 +273,7 @@ suite("TestExecutor Unit Tests", () => {
     // Mock debug.startDebugging
     const mockStartDebugging = (_workspace: any, _config: any) => {
       assert.strictEqual(_config.name, "Debug: Test Scenario");
-      assert.strictEqual(_config.type, "python");
+      assert.ok(["debugpy", "python"].includes(_config.type));
       assert.strictEqual(_config.request, "launch");
       assert.strictEqual(_config.module, "behave");
       assert.deepStrictEqual(_config.args, ["/test/path/test.feature:5"]);

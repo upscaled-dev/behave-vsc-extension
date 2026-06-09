@@ -178,8 +178,10 @@ suite("Integration Test Suite", () => {
     const uri = vscode.Uri.file("/tmp/test.feature");
     assert.ok(uri, "Should be able to create URI");
     assert.strictEqual(uri.scheme, "file", "URI should have file scheme");
+    // Normalise separators so the assertion holds on Windows, where fsPath uses
+    // backslashes (e.g. "\\tmp\\test.feature").
     assert.strictEqual(
-      uri.fsPath,
+      uri.fsPath.replaceAll("\\", "/"),
       "/tmp/test.feature",
       "URI should have correct fsPath"
     );

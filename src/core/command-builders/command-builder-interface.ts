@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 
 /**
@@ -35,6 +36,19 @@ export interface CommandBuilder {
    * @returns Promise resolving to command string to debug the scenario
    */
   buildDebugCommand(options: TestExecutionOptions): Promise<string>;
+
+  /**
+   * Build a VSCode debug configuration to launch a debug session for a scenario.
+   *
+   * Unlike buildDebugCommand (which produces a shell command string), this returns
+   * a launch configuration passed to vscode.debug.startDebugging so the Python
+   * debugger attaches and breakpoints are honored. The `cwd` may be omitted; the
+   * caller (TestExecutor) injects the working directory.
+   *
+   * @param options - Test execution options including file path, line number, scenario name
+   * @returns Promise resolving to a VSCode debug configuration
+   */
+  buildDebugConfiguration(options: TestExecutionOptions): Promise<vscode.DebugConfiguration>;
 
   /**
    * Validate that the framework is properly installed and available

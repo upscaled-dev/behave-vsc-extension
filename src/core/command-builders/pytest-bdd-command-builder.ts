@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import { CommandBuilder } from "./command-builder-interface";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 import { ExtensionConfig } from "../extension-config";
@@ -112,6 +113,37 @@ export class PytestBddCommandBuilder implements CommandBuilder {
   public async buildDebugCommand(options: TestExecutionOptions): Promise<string> {
     const baseCommand = await this.buildScenarioCommand(options);
     return `${baseCommand} -s --capture=no`;
+  }
+
+  /**
+   * Build a VSCode debug configuration that launches pytest under the Python
+   * debugger so breakpoints are honored. `cwd` is intentionally omitted and
+   * injected by the caller (TestExecutor).
+   */
+  public buildDebugConfiguration(options: TestExecutionOptions): Promise<vscode.DebugConfiguration> {
+    const { filePath, scenarioName } = options;
+    if (!filePath || filePath.trim() === "") {
+      throw new Error("File path is required for debugging");
+    }
+
+    const testFilePath = this.convertFeaturePathToTestPath(filePath);
+    let target = testFilePath;
+    if (scenarioName) {
+      target += `::${this.convertScenarioNameToTestFunction(scenarioName)}`;
+    }
+
+    // -s disables pytest's stdout capture so print output is visible while debugging.
+    const args = [target, "-s", "-v"];
+
+    return Promise.resolve({
+      name: `Debug: ${scenarioName ?? "Test Scenario"}`,
+      type: "debugpy",
+      request: "launch",
+      module: "pytest",
+      args,
+      console: "integratedTerminal",
+      justMyCode: false,
+    });
   }
 
   /**

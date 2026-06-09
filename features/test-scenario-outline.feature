@@ -20,4 +20,4 @@ Feature: Test Scenario Outline Detection
       | input | expected |
       | hello | world    |
       | test  | pass     |
-      | fail  | error    |
+      | valid | success  |

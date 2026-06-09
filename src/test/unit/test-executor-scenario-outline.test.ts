@@ -1,4 +1,7 @@
 import * as assert from "assert";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { TestExecutor } from "../../core/test-executor";
 
 suite("Test Executor Scenario Outline Unit Tests", () => {
@@ -177,8 +180,8 @@ Feature: Login
       | admin    | secret   | success |
       | user     | wrong    | error |
 `;
-    const filePath = "/tmp/test-outline.feature";
-    require("fs").writeFileSync(filePath, featureContent);
+    const filePath = path.join(os.tmpdir(), "test-outline.feature");
+    fs.writeFileSync(filePath, featureContent);
 
     // Spy to capture commands sent to the terminal
     const sentCommands: string[] = [];
@@ -200,11 +203,13 @@ Feature: Login
     }
     assert.ok(found, `Should run scenario outline with: ${expected}`);
     assert.strictEqual(sentCommands.length, 1, "Should run exactly 1 command for the outline");
-    require("fs").unlinkSync(filePath);
+    fs.unlinkSync(filePath);
   });
 
   test("Should run all examples for scenario outline in advanced-example.feature", async () => {
-    const filePath = require("path").join(process.cwd(), "features/advanced-example.feature");
+    // Resolve relative to this compiled test (out/test/unit) rather than cwd,
+    // which is not the repo root in the Windows VS Code test host.
+    const filePath = path.join(__dirname, "../../../features/advanced-example.feature");
     const scenarioOutlineName = "Load testing with multiple users";
     const sentCommands: string[] = [];
     (testExecutor as any).executeCommand = (cmd: string) => {
