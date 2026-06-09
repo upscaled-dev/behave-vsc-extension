@@ -64,6 +64,12 @@ export interface BehaveTestRunnerConfig {
 export interface TestRunResult {
   success: boolean;
   output: string;
+  /**
+   * Human-readable native output to surface in the Test Results panel. For
+   * Behave this is the pretty formatter output (the machine-readable JSON lives
+   * in `output`); for other frameworks it mirrors `output`.
+   */
+  display?: string | undefined;
   error?: string;
   duration: number;
 }

@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import { CommandBuilder } from "./command-builder-interface";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 import { ExtensionConfig } from "../extension-config";
@@ -133,6 +134,42 @@ export class BehaveCommandBuilder implements CommandBuilder {
   public async buildDebugCommand(options: TestExecutionOptions): Promise<string> {
     const baseCommand = await this.buildScenarioCommand(options);
     return `${baseCommand} --no-capture`;
+  }
+
+  /**
+   * Build a VSCode debug configuration that launches behave under the Python
+   * debugger so breakpoints are honored. `cwd` is intentionally omitted and
+   * injected by the caller (TestExecutor).
+   */
+  public buildDebugConfiguration(options: TestExecutionOptions): Promise<vscode.DebugConfiguration> {
+    const { filePath, lineNumber, scenarioName } = options;
+    if (!filePath || filePath.trim() === "") {
+      throw new Error("File path is required for debugging");
+    }
+
+    const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
+    const isOutlineRun = Boolean(scenarioName) && !isExample && fs.existsSync(filePath);
+
+    const args: string[] = isOutlineRun
+      ? [filePath, "--name", scenarioName as string]
+      : [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
+
+    if (!isOutlineRun && scenarioName) {
+      args.push("--name", isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName);
+    }
+
+    // Show print/stdout while debugging (behave captures it by default).
+    args.push("--no-capture");
+
+    return Promise.resolve({
+      name: `Debug: ${scenarioName ?? "Test Scenario"}`,
+      type: "debugpy",
+      request: "launch",
+      module: "behave",
+      args,
+      console: "integratedTerminal",
+      justMyCode: false,
+    });
   }
 
   /**

@@ -112,6 +112,27 @@ export class CommandManager {
     return this.getFrameworkName() === "pytest-bdd" ? "Pytest-BDD" : "Behave";
   }
 
+  private isBehave(): boolean {
+    return this.getFrameworkName() === "behave";
+  }
+
+  /**
+   * Run a test once and return its results. For Behave the `capture` call itself
+   * runs Behave a single time in the terminal — showing native (pretty) output
+   * while writing JSON to a file for status icons — so the separate shell-display
+   * `shellRun` is skipped (avoids running each test twice). Other frameworks run
+   * `shellRun` for native output, then `capture` to collect results.
+   */
+  private async runAndRender(
+    shellRun: () => Promise<void>,
+    capture: () => Promise<import("../types").TestRunResult>
+  ): Promise<import("../types").TestRunResult> {
+    if (!this.isBehave()) {
+      await shellRun();
+    }
+    return capture();
+  }
+
   public setTestProvider(testProvider: unknown): void {
     this.testProvider = testProvider;
   }
@@ -299,8 +320,11 @@ export class CommandManager {
     tags?: string
   ): Promise<import("../types").TestRunResult> {
     if (!lineNumber) {
-      await this.context.testExecutor.runFeatureFile({ filePath, ...(tags ? { tags } : {}) });
-      return this.context.testExecutor.runFeatureFileWithOutput({ filePath, ...(tags ? { tags } : {}) });
+      const featureOpts = { filePath, ...(tags ? { tags } : {}) };
+      return this.runAndRender(
+        () => this.context.testExecutor.runFeatureFile(featureOpts),
+        () => this.context.testExecutor.runFeatureFileWithOutput(featureOpts)
+      );
     }
 
     const opts: import("../types").TestExecutionOptions = {
@@ -309,8 +333,10 @@ export class CommandManager {
       ...(scenarioName !== undefined ? { scenarioName } : {}),
       ...(tags ? { tags } : {}),
     };
-    await this.context.testExecutor.runScenario(opts);
-    return this.context.testExecutor.runScenarioWithOutput(opts);
+    return this.runAndRender(
+      () => this.context.testExecutor.runScenario(opts),
+      () => this.context.testExecutor.runScenarioWithOutput(opts)
+    );
   }
 
   private logResult(label: string, result: import("../types").TestRunResult): void {
@@ -343,8 +369,10 @@ export class CommandManager {
 
     this.updateTestStatus(filePath, undefined, "started");
     try {
-      await this.context.testExecutor.runFeatureFile({ filePath });
-      const result = await this.context.testExecutor.runFeatureFileWithOutput({ filePath });
+      const result = await this.runAndRender(
+        () => this.context.testExecutor.runFeatureFile({ filePath }),
+        () => this.context.testExecutor.runFeatureFileWithOutput({ filePath })
+      );
       this.updateTestStatus(filePath, undefined, result.success ? "passed" : "failed");
       this.logResult("Feature", result);
       if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
@@ -356,7 +384,12 @@ export class CommandManager {
 
   private async runAllTests(): Promise<void> {
     this.logger.info(`Running all ${this.getFrameworkName()} tests`);
-    await this.context.testExecutor.runAllTests();
+    if (this.isBehave()) {
+      // Single run: native output to the terminal + JSON to a file for icons.
+      await this.context.testExecutor.runAllTestsWithOutput();
+    } else {
+      await this.context.testExecutor.runAllTests();
+    }
   }
 
   private async debugScenario(...args: CommandArguments): Promise<void> {
@@ -412,8 +445,10 @@ export class CommandManager {
 
     this.updateTestStatusForTags(filePath, tags, "started");
     try {
-      await this.context.testExecutor.runFeatureFile({ filePath, tags });
-      const result = await this.context.testExecutor.runFeatureFileWithOutput({ filePath, tags });
+      const result = await this.runAndRender(
+        () => this.context.testExecutor.runFeatureFile({ filePath, tags }),
+        () => this.context.testExecutor.runFeatureFileWithOutput({ filePath, tags })
+      );
       this.updateTestStatusForTags(filePath, tags, result.success ? "passed" : "failed");
       this.logResult("Feature with tags", result);
       if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
@@ -428,7 +463,11 @@ export class CommandManager {
     if (!filePath) {throw new Error("File path is required");}
     if (!tags) {throw new Error("Tags are required");}
 
-    await this.context.testExecutor.runScenario({ filePath, lineNumber, scenarioName, tags });
+    const opts = { filePath, lineNumber, scenarioName, tags };
+    await this.runAndRender(
+      () => this.context.testExecutor.runScenario(opts),
+      () => this.context.testExecutor.runScenarioWithOutput(opts)
+    );
   }
 
   private async runAllTestsParallel(): Promise<void> {
@@ -441,8 +480,10 @@ export class CommandManager {
     if (!filePath) {throw new Error("File path is required");}
 
     const opts = { filePath, lineNumber, ...(scenarioName ? { scenarioName } : {}) };
-    await this.context.testExecutor.runScenario(opts);
-    const result = await this.context.testExecutor.runScenarioWithOutput(opts);
+    const result = await this.runAndRender(
+      () => this.context.testExecutor.runScenario(opts),
+      () => this.context.testExecutor.runScenarioWithOutput(opts)
+    );
     this.logResult("Scenario with context", result);
     if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
@@ -463,8 +504,10 @@ export class CommandManager {
     const [filePath] = args as [string];
     if (!filePath) {throw new Error("File path is required");}
 
-    await this.context.testExecutor.runFeatureFile({ filePath });
-    const result = await this.context.testExecutor.runFeatureFileWithOutput({ filePath });
+    const result = await this.runAndRender(
+      () => this.context.testExecutor.runFeatureFile({ filePath }),
+      () => this.context.testExecutor.runFeatureFileWithOutput({ filePath })
+    );
     this.logResult("Feature with context", result);
     if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
