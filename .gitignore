@@ -3,11 +3,12 @@ node_modules/
 jspm_packages/
 bower_components/
 
-# Build outputs
+# Build outputs (root node-gyp/C++ output only — anchored so it doesn't
+# swallow tracked dirs like scripts/build/)
 dist/
 out/
-build/
-build/Release
+/build/
+/build/Release
 *.tsbuildinfo
 
 # Extension packaging
