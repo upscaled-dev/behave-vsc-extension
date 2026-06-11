@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { TestExecutor } from "../../core/test-executor";
+import { isScenarioOutlineExampleName, extractOutlineName } from "../../utils/scenario-outline";
 
 suite("Test Executor Scenario Outline Unit Tests", () => {
   let testExecutor: TestExecutor;
@@ -14,24 +15,16 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
 
   test("Should detect scenario outline examples correctly", () => {
     // Test scenario outline example detection
-    const isExample1 = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      10,
+    const isExample1 = isScenarioOutlineExampleName(
       "1: Load testing with multiple users - user_count: 10, max_response_time: 2"
     );
-    const isExample2 = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      15,
+    const isExample2 = isScenarioOutlineExampleName(
       "2: Login with different credentials - username: admin, password: admin123, expected_result: dashboard"
     );
-    const isRegularScenario = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      5,
+    const isRegularScenario = isScenarioOutlineExampleName(
       "Basic smoke test"
     );
-    const isUndefined = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      5,
+    const isUndefined = isScenarioOutlineExampleName(
       undefined
     );
 
@@ -59,13 +52,13 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
 
   test("Should extract original outline name correctly", () => {
     // Test original outline name extraction
-    const original1 = (testExecutor as any).extractOriginalOutlineName(
+    const original1 = extractOutlineName(
       "1: Load testing with multiple users - user_count: 10, max_response_time: 2"
     );
-    const original2 = (testExecutor as any).extractOriginalOutlineName(
+    const original2 = extractOutlineName(
       "2: Login with different credentials - username: admin, password: admin123, expected_result: dashboard"
     );
-    const regularScenario = (testExecutor as any).extractOriginalOutlineName(
+    const regularScenario = extractOutlineName(
       "Basic smoke test"
     );
 
@@ -90,7 +83,7 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
     // Test with more complex scenario names
     const complexName =
       "1: API data validation with various input types - data_type: string, input_value: hello, validation_result: valid, status_code: 200";
-    const original = (testExecutor as any).extractOriginalOutlineName(
+    const original = extractOutlineName(
       complexName
     );
 
@@ -105,7 +98,7 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
     // Test with scenario names containing special characters
     const specialName =
       "1: Test with \"quotes\" and 'apostrophes' - param1: value1, param2: value2";
-    const original = (testExecutor as any).extractOriginalOutlineName(
+    const original = extractOutlineName(
       specialName
     );
 
@@ -118,19 +111,13 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
 
   test("Should handle edge cases in scenario outline detection", () => {
     // Test edge cases
-    const emptyName = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      5,
+    const emptyName = isScenarioOutlineExampleName(
       ""
     );
-    const nullName = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      5,
+    const nullName = isScenarioOutlineExampleName(
       null as any
     );
-    const malformedName = (testExecutor as any).isScenarioOutlineExample(
-      "/test/feature.feature",
-      5,
+    const malformedName = isScenarioOutlineExampleName(
       "Just a regular name without pattern"
     );
 
@@ -145,11 +132,11 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
 
   test("Should handle edge cases in outline name extraction", () => {
     // Test edge cases for name extraction
-    const emptyName = (testExecutor as any).extractOriginalOutlineName("");
-    const malformedName = (testExecutor as any).extractOriginalOutlineName(
+    const emptyName = extractOutlineName("");
+    const malformedName = extractOutlineName(
       "Just a regular name without pattern"
     );
-    const onlyNumber = (testExecutor as any).extractOriginalOutlineName(
+    const onlyNumber = extractOutlineName(
       "1: - param: value"
     );
 

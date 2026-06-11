@@ -82,7 +82,7 @@ export class CucumberJsonParser {
    * @param jsonOutput - Raw cucumber JSON output
    * @returns Parsed test results
    */
-  public parseCucumberJson(jsonOutput: string): CucumberTestSuite {
+  public parseCucumberJson(jsonOutput: string, workspaceRoot?: string): CucumberTestSuite {
     this.logger.debug("Parsing cucumber JSON output", { outputLength: jsonOutput.length });
     this.logger.debug("Raw JSON output:", { jsonOutput });
 
@@ -122,7 +122,7 @@ export class CucumberJsonParser {
           const errorMessage = failedStep?.result.error_message;
 
           // Extract file path and line number from scenario
-          const filePath = this.extractFilePath(feature.uri);
+          const filePath = this.extractFilePath(feature.uri, workspaceRoot);
           const lineNumber = scenario.line;
 
           this.logger.debug("Created test result:", { 
@@ -231,10 +231,10 @@ export class CucumberJsonParser {
    * Parse cucumber JSON output and create multiple keys for each scenario to handle all TestItemMapping patterns
    * This method creates a comprehensive set of keys that the TestItemMapping can use
    */
-  public parseCucumberJsonWithMultipleKeys(jsonOutput: string): Record<string, string> {
+  public parseCucumberJsonWithMultipleKeys(jsonOutput: string, workspaceRoot?: string): Record<string, string> {
     this.logger.debug("Parsing cucumber JSON with multiple keys for TestItemMapping");
-    
-    const suite = this.parseCucumberJson(jsonOutput);
+
+    const suite = this.parseCucumberJson(jsonOutput, workspaceRoot);
     const scenarioResults: Record<string, string> = {};
     
     for (const test of suite.tests) {
@@ -285,31 +285,32 @@ export class CucumberJsonParser {
 
   /**
    * Extract file path from feature URI
-   * Convert absolute paths to relative paths to match behave format
+   * Convert absolute paths to relative paths (forward-slashed) to match the
+   * workspace-relative keys TestItemMapping builds.
    */
-  private extractFilePath(uri: string): string {
+  private extractFilePath(uri: string, workspaceRoot?: string): string {
     this.logger.debug("Extracting file path from URI", { uri });
-    
-    // Convert absolute path to relative path
-    // Example: /Users/zer0gr4v/PycharmProjects/behave-test-runner-extension/tests/features/pytest_bdd_example.feature
-    // Should become: tests/features/pytest_bdd_example.feature
-    
-    // Remove the workspace root if it's an absolute path
-    const workspaceRoot = process.cwd();
-    this.logger.debug("Workspace root", { workspaceRoot });
-    
-    if (uri.startsWith(workspaceRoot)) {
-      const relativePath = uri.slice(workspaceRoot.length + 1); // +1 for the slash
-      this.logger.debug("Converted absolute path to relative", { 
-        absolute: uri, 
-        relative: relativePath 
+
+    // Normalise Windows backslashes so keys always use forward slashes.
+    const normalizedUri = uri.replace(/\\/g, "/");
+
+    // Relativize against the run's working directory (the cwd pytest ran in),
+    // not the extension host's process.cwd().
+    const root = (workspaceRoot ?? process.cwd()).replace(/\\/g, "/");
+    this.logger.debug("Workspace root", { workspaceRoot: root });
+
+    if (normalizedUri.startsWith(`${root}/`)) {
+      const relativePath = normalizedUri.slice(root.length + 1);
+      this.logger.debug("Converted absolute path to relative", {
+        absolute: uri,
+        relative: relativePath
       });
       return relativePath;
     }
-    
+
     // If it's already a relative path, return as is
-    this.logger.debug("Path is already relative", { uri });
-    return uri;
+    this.logger.debug("Path is already relative", { uri: normalizedUri });
+    return normalizedUri;
   }
 
   /**

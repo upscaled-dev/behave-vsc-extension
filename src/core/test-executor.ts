@@ -13,6 +13,8 @@ import { Logger } from "../utils/logger";
 import { ExtensionConfig } from "./extension-config";
 import { BehaveJsonParser } from "../utils/behave-json-parser";
 import { CucumberJsonParser } from "../utils/cucumber-json-parser";
+import { CommandBuilder } from "./command-builders/command-builder-interface";
+import { BehaveCommandBuilder } from "./command-builders/behave-command-builder";
 
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error occurred";
@@ -36,6 +38,7 @@ export class TestExecutor {
   private readonly behaveJsonParser: BehaveJsonParser;
   private readonly cucumberJsonParser: CucumberJsonParser;
   private context?: BehaveExtensionContext;
+  private fallbackBuilder?: CommandBuilder;
 
   public static create(
     workspace?: typeof vscode.workspace,
@@ -75,21 +78,41 @@ export class TestExecutor {
     this.config.reload();
   }
 
+  /**
+   * The active framework's command builder. Production always injects one via
+   * the shared context; outside it (tests, partially-wired fallbacks) a behave
+   * builder is created so every execution path goes through the same builder
+   * API instead of a parallel legacy implementation.
+   */
+  private getCommandBuilder(): CommandBuilder {
+    if (this.context?.commandBuilder) {
+      return this.context.commandBuilder;
+    }
+    this.fallbackBuilder ??= new BehaveCommandBuilder(this.config);
+    return this.fallbackBuilder;
+  }
+
   private getCurrentFramework(): string {
-    return this.context?.commandBuilder?.getFrameworkName() ?? "behave";
+    return this.getCommandBuilder().getFrameworkName();
   }
 
   public isBehaveFramework(): boolean {
     return this.getCurrentFramework() === "behave";
   }
 
-  /** Absolute paths for the per-run Behave JSON results and completion marker. */
+  /**
+   * Absolute paths for the per-run Behave JSON results and completion marker.
+   * Names are uniquified per run so concurrent runs (a second VS Code window,
+   * or overlapping CodeLens/Test Explorer runs) cannot read each other's
+   * marker or results.
+   */
   private behaveOutPaths(): { json: string; done: string; pretty: string } {
     const dir = os.tmpdir();
+    const runId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return {
-      json: path.join(dir, "behave-test-runner-results.json"),
-      done: path.join(dir, "behave-test-runner-results.done"),
-      pretty: path.join(dir, "behave-test-runner-results.pretty"),
+      json: path.join(dir, `behave-test-runner-${runId}.json`),
+      done: path.join(dir, `behave-test-runner-${runId}.done`),
+      pretty: path.join(dir, `behave-test-runner-${runId}.pretty`),
     };
   }
 
@@ -109,9 +132,6 @@ export class TestExecutor {
     workingDir: string
   ): Promise<CommandResult & { scenarioResults: Record<string, string>; scenarioOutputs: Record<string, string> }> {
     const { json: jsonFile, done: doneFile, pretty: prettyFile } = this.behaveOutPaths();
-    for (const f of [jsonFile, doneFile, prettyFile]) {
-      try { if (fs.existsSync(f)) { fs.unlinkSync(f); } } catch { /* best effort */ }
-    }
 
     // Force three formatters: json -> file (machine-readable results), pretty ->
     // file (captured for the Test Results panel), pretty -> stdout (native
@@ -122,27 +142,70 @@ export class TestExecutor {
       .replace(/\s-f\s+\S+/g, "");
     const command = `${cleaned} -f json -o "${jsonFile}" -f pretty -o "${prettyFile}" -f pretty`;
 
-    this.executeBehaveWithMarker(command, doneFile, workingDir);
-
-    const { output, returnCode } = await this.readBehaveResults(jsonFile, doneFile);
-    const scenarioResults = output ? await this.parseTestResults(output) : {};
-    const scenarioOutputs = output ? this.parseScenarioOutputs(output) : {};
-    let display = "";
     try {
-      if (fs.existsSync(prettyFile)) { display = fs.readFileSync(prettyFile, "utf8"); }
-    } catch { /* pretty capture is best effort */ }
-    return { success: returnCode === 0, output, error: "", returnCode, scenarioResults, scenarioOutputs, display };
+      this.executeBehaveWithMarker(command, doneFile, workingDir);
+
+      const { output, returnCode } = await this.readBehaveResults(jsonFile, doneFile);
+      const scenarioResults = output ? await this.parseTestResults(output) : {};
+      const scenarioOutputs = output ? this.parseScenarioOutputs(output) : {};
+      let display = "";
+      try {
+        if (fs.existsSync(prettyFile)) { display = fs.readFileSync(prettyFile, "utf8"); }
+      } catch { /* pretty capture is best effort */ }
+      return { success: returnCode === 0, output, error: "", returnCode, scenarioResults, scenarioOutputs, display };
+    } finally {
+      for (const f of [jsonFile, doneFile, prettyFile]) {
+        try { if (fs.existsSync(f)) { fs.unlinkSync(f); } } catch { /* best effort */ }
+      }
+    }
+  }
+
+  /**
+   * The default integrated-terminal shell on the current platform. The exit-code
+   * marker and `clear`/`cd` preambles must use that shell's syntax: `;` chaining
+   * and `$?` are POSIX-only, `%ERRORLEVEL%` is cmd-only, `$LASTEXITCODE` is
+   * PowerShell-only.
+   */
+  private terminalShell(): "posix" | "cmd" | "powershell" {
+    if (process.platform !== "win32") { return "posix"; }
+    const shell = (vscode.env.shell ?? "").toLowerCase();
+    if (shell.includes("bash") || shell.includes("wsl")) { return "posix"; }
+    if (shell.includes("cmd.exe")) { return "cmd"; }
+    return "powershell"; // VS Code's default shell on Windows
+  }
+
+  /** Build the shell line that runs the command and writes its exit code to a file. */
+  private markerCommand(command: string, doneFile: string): string {
+    switch (this.terminalShell()) {
+      case "cmd":
+        return `${command} & echo %ERRORLEVEL% > "${doneFile}"`;
+      case "powershell":
+        // Set-Content with ascii encoding avoids the UTF-16/BOM output that
+        // `>` redirection produces in Windows PowerShell.
+        return `${command}; Set-Content -Path "${doneFile}" -Value "$LASTEXITCODE" -Encoding ascii`;
+      default:
+        return `${command} ; echo "$?" > "${doneFile}"`;
+    }
+  }
+
+  private clearCommand(): string {
+    return this.terminalShell() === "cmd" ? "cls" : "clear";
+  }
+
+  private cdCommand(workingDir: string): string {
+    // cmd needs /d to follow a drive change; harmless otherwise.
+    return this.terminalShell() === "cmd" ? `cd /d "${workingDir}"` : `cd "${workingDir}"`;
   }
 
   /** Send a Behave command to the reused terminal, appending an exit-code marker. */
   private executeBehaveWithMarker(command: string, doneFile: string, workingDir: string): void {
     this.terminal ??= this.window.createTerminal("Behave Test Runner");
     this.terminal.show();
-    this.terminal.sendText("clear");
+    this.terminal.sendText(this.clearCommand());
     if (workingDir && workingDir !== process.cwd()) {
-      this.terminal.sendText(`cd "${workingDir}"`);
+      this.terminal.sendText(this.cdCommand(workingDir));
     }
-    this.terminal.sendText(`${command} ; echo "$?" > "${doneFile}"`);
+    this.terminal.sendText(this.markerCommand(command, doneFile));
   }
 
   /**
@@ -160,10 +223,13 @@ export class TestExecutor {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (fs.existsSync(doneFile)) {
-        let returnCode = 0;
+        // Default to failure when the marker is unreadable/unparseable: a false
+        // "failed" is recoverable, a false "passed" silently hides a red test.
+        let returnCode = 1;
         try {
-          const code = Number.parseInt(fs.readFileSync(doneFile, "utf8").trim(), 10);
-          returnCode = Number.isFinite(code) ? code : 0;
+          const raw = fs.readFileSync(doneFile, "utf8").replace(/^\uFEFF/, "").trim();
+          const code = Number.parseInt(raw, 10);
+          returnCode = Number.isFinite(code) ? code : 1;
         } catch { /* marker not flushed yet */ }
         let output = "";
         try {
@@ -221,13 +287,16 @@ export class TestExecutor {
   }
 
   private async parsePytestBddResults(): Promise<Record<string, string>> {
-    const cucumberJsonPath = path.join(process.cwd(), "cucumber-output.json");
+    // pytest writes the relative --cucumber-json path into its cwd, which is the
+    // run's working directory — not the extension host's process.cwd().
+    const workingDir = this.getWorkingDirectory();
+    const cucumberJsonPath = path.join(workingDir, "cucumber-output.json");
     const retryDelay = 100;
     for (let i = 0; i < 3; i++) {
       if (fs.existsSync(cucumberJsonPath)) {
         try {
           const content = fs.readFileSync(cucumberJsonPath, "utf8");
-          return this.cucumberJsonParser.parseCucumberJsonWithMultipleKeys(content);
+          return this.cucumberJsonParser.parseCucumberJsonWithMultipleKeys(content, workingDir);
         } catch (error) {
           this.logger.error("Failed to parse cucumber JSON", { error });
           return {};
@@ -239,60 +308,9 @@ export class TestExecutor {
     return {};
   }
 
-  /** Build a `file.feature[:line]` test target. */
-  private fileTarget(filePath: string, lineNumber?: number): string {
-    return lineNumber ? `${filePath}:${lineNumber}` : filePath;
-  }
-
-  private buildScenarioCommandLegacy(behaveCommand: string, options: TestExecutionOptions, addJson = false): string {
-    const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } = options;
-    const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
-    const isOutlineRun = scenarioName && !isExample && filePath && fs.existsSync(filePath);
-
-    let command: string;
-    if (isOutlineRun) {
-      command = `${behaveCommand} "${filePath}" --name="${scenarioName}"`;
-    } else {
-      command = `${behaveCommand} "${this.fileTarget(filePath, lineNumber)}"`;
-      if (scenarioName) {
-        const name = isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName;
-        command += ` --name="${name}"`;
-      }
-    }
-    command += this.tagsSuffix(tags);
-    command += this.formatSuffix(outputFormat, addJson);
-    if (dryRun || this.config.dryRun) {command += " --dry-run";}
-    return command;
-  }
-
-  private buildFeatureCommandLegacy(behaveCommand: string, options: FeatureExecutionOptions, addJson = false): string {
-    let command = `${behaveCommand} "${options.filePath}"`;
-    command += this.tagsSuffix(options.tags, false);
-    command += this.formatSuffix(options.outputFormat, addJson);
-    if (options.dryRun || this.config.dryRun) {command += " --dry-run";}
-    return command;
-  }
-
-  private tagsSuffix(tags: string | undefined, useConfigFallback = true): string {
-    const effective = tags ?? (useConfigFallback ? this.config.tags : "");
-    return effective ? ` --tags="${effective}" --no-skipped` : "";
-  }
-
-  private formatSuffix(outputFormat: string | undefined, addJson: boolean): string {
-    if (addJson) {return " --format=json";}
-    const format = outputFormat ?? this.config.outputFormat;
-    return format && format !== "pretty" ? ` --format=${format}` : "";
-  }
-
   public async runScenario(options: TestExecutionOptions): Promise<void> {
-    const workingDir = this.getWorkingDirectory();
-    if (this.context?.commandBuilder) {
-      const command = await this.context.commandBuilder.buildScenarioCommand(options);
-      this.executeCommand(command, workingDir);
-      return;
-    }
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    this.executeCommand(this.buildScenarioCommandLegacy(behaveCommand, options), workingDir);
+    const command = await this.getCommandBuilder().buildScenarioCommand(options);
+    this.executeCommand(command, this.getWorkingDirectory());
   }
 
   public async debugScenario(options: TestExecutionOptions): Promise<void> {
@@ -302,9 +320,7 @@ export class TestExecutor {
       // Build the launch configuration. A debug session MUST be started through
       // vscode.debug.startDebugging (not run as a terminal command) for the
       // Python debugger to attach and honor breakpoints.
-      const debugConfig = this.context?.commandBuilder
-        ? await this.context.commandBuilder.buildDebugConfiguration(options)
-        : this.buildLegacyBehaveDebugConfig(options);
+      const debugConfig = await this.getCommandBuilder().buildDebugConfiguration(options);
 
       // Resolve the correct debugger type for the installed Python tooling. The
       // builders default to "debugpy"; override centrally so legacy setups that
@@ -358,57 +374,14 @@ export class TestExecutor {
     return "debugpy";
   }
 
-  /**
-   * Legacy fallback debug configuration for behave, used when no framework
-   * CommandBuilder is wired into the execution context.
-   */
-  private buildLegacyBehaveDebugConfig(options: TestExecutionOptions): vscode.DebugConfiguration {
-    const { filePath, lineNumber, scenarioName } = options;
-    if (!filePath || filePath.trim() === "") {
-      throw new Error("File path is required for debugging");
-    }
-
-    const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
-    const isOutlineRun = scenarioName && !isExample && fs.existsSync(filePath);
-
-    const args: string[] = isOutlineRun
-      ? [filePath, "--name", scenarioName]
-      : [this.fileTarget(filePath, lineNumber)];
-
-    if (!isOutlineRun && scenarioName) {
-      args.push("--name", isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName);
-    }
-
-    return {
-      name: `Debug: ${scenarioName ?? "Test Scenario"}`,
-      type: "debugpy",
-      request: "launch",
-      module: "behave",
-      args,
-      console: "integratedTerminal",
-      justMyCode: false,
-    };
-  }
-
   public async runFeatureFile(options: FeatureExecutionOptions): Promise<void> {
-    const workingDir = this.getWorkingDirectory();
-    if (this.context?.commandBuilder) {
-      const command = await this.context.commandBuilder.buildFeatureCommand(options);
-      this.executeCommand(command, workingDir);
-      return;
-    }
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    this.executeCommand(this.buildFeatureCommandLegacy(behaveCommand, options), workingDir);
+    const command = await this.getCommandBuilder().buildFeatureCommand(options);
+    this.executeCommand(command, this.getWorkingDirectory());
   }
 
   public async runAllTests(): Promise<void> {
-    const workingDir = this.getWorkingDirectory();
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    let command = behaveCommand;
-    command += this.tagsSuffix(undefined);
-    command += this.formatSuffix(undefined, false);
-    if (this.config.dryRun) {command += " --dry-run";}
-    this.executeCommand(command, workingDir);
+    const command = await this.getCommandBuilder().buildRunAllCommand();
+    this.executeCommand(command, this.getWorkingDirectory());
   }
 
   /**
@@ -419,10 +392,7 @@ export class TestExecutor {
     const startTime = Date.now();
     const workingDir = this.getWorkingDirectory();
     try {
-      const behaveCommand = await this.config.getIntelligentBehaveCommand();
-      let base = `${behaveCommand}${this.tagsSuffix(undefined)}`;
-      if (this.config.dryRun) {base += " --dry-run";}
-
+      const base = await this.getCommandBuilder().buildRunAllCommand();
       const r = await this.runBehaveCapture(base, workingDir);
       return {
         success: r.success,
@@ -619,19 +589,15 @@ if __name__ == "__main__":
     const elapsed = (): number => Math.max(1, Date.now() - startTime);
 
     try {
+      const command = await this.getCommandBuilder().buildScenarioCommand(options);
+
       // Behave: run once in the terminal (native output) + JSON to a file.
       if (this.isBehaveFramework()) {
-        const base = this.context?.commandBuilder
-          ? await this.context.commandBuilder.buildScenarioCommand(options)
-          : this.buildScenarioCommandLegacy(await this.config.getIntelligentBehaveCommand(), options);
-        const r = await this.runBehaveCapture(base, workingDir);
+        const r = await this.runBehaveCapture(command, workingDir);
         return { success: r.success, output: r.output, display: r.display, error: r.error, duration: elapsed(), scenarioResults: r.scenarioResults, scenarioOutputs: r.scenarioOutputs };
       }
 
       // Other frameworks (e.g. pytest-bdd): capture native output via spawn.
-      const command = this.context?.commandBuilder
-        ? await this.context.commandBuilder.buildScenarioCommand(options)
-        : this.buildScenarioCommandLegacy(await this.config.getIntelligentBehaveCommand(), options, true);
       const result = await this.executeCommandWithOutput(command, workingDir);
       const scenarioResults = await this.parseTestResults(result.output);
       return { success: result.success, output: result.output, display: result.output, error: result.error, duration: elapsed(), scenarioResults };
@@ -648,19 +614,15 @@ if __name__ == "__main__":
     const elapsed = (): number => Math.max(1, Date.now() - startTime);
 
     try {
+      const command = await this.getCommandBuilder().buildFeatureCommand(options);
+
       // Behave: run once in the terminal (native output) + JSON to a file.
       if (this.isBehaveFramework()) {
-        const base = this.context?.commandBuilder
-          ? await this.context.commandBuilder.buildFeatureCommand(options)
-          : this.buildFeatureCommandLegacy(await this.config.getIntelligentBehaveCommand(), options);
-        const r = await this.runBehaveCapture(base, workingDir);
+        const r = await this.runBehaveCapture(command, workingDir);
         return { success: r.success, output: r.output, display: r.display, error: r.error, duration: elapsed(), scenarioResults: r.scenarioResults, scenarioOutputs: r.scenarioOutputs };
       }
 
       // Other frameworks (e.g. pytest-bdd): capture native output via spawn.
-      const command = this.context?.commandBuilder
-        ? await this.context.commandBuilder.buildFeatureCommand(options)
-        : this.buildFeatureCommandLegacy(await this.config.getIntelligentBehaveCommand(), options, true);
       const result = await this.executeCommandWithOutput(command, workingDir);
       const scenarioResults = await this.parseTestResults(result.output);
       return { success: result.success, output: result.output, display: result.output, error: result.error, duration: elapsed(), scenarioResults };
@@ -719,18 +681,6 @@ if __name__ == "__main__":
     return true;
   }
 
-  private isScenarioOutlineExample(_filePath: string, _lineNumber?: number, scenarioName?: string): boolean {
-    if (!scenarioName) {return false;}
-    return /^\d+:\s*.+\s*-\s*/.test(scenarioName);
-  }
-
-  private extractOriginalOutlineName(scenarioName: string): string {
-    const match = /^(\d+):\s*(.*?)\s*-\s*/.exec(scenarioName);
-    const extracted = match?.[2]?.trim();
-    if (!extracted) {return scenarioName;}
-    return extracted;
-  }
-
   public dispose(): void {
     if (this.terminal) {
       this.terminal.dispose();
@@ -739,14 +689,8 @@ if __name__ == "__main__":
   }
 
   public async runAllTestsWithTags(tag: string): Promise<void> {
-    const workingDir = this.getWorkingDirectory();
-    if (this.context?.commandBuilder) {
-      const command = await this.context.commandBuilder.buildTagCommand(tag);
-      this.executeCommand(command, workingDir);
-      return;
-    }
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    this.executeCommand(`${behaveCommand} --tags="${tag}" --no-skipped`, workingDir);
+    const command = await this.getCommandBuilder().buildTagCommand(tag);
+    this.executeCommand(command, this.getWorkingDirectory());
   }
 
   public async runAllTestsWithTagsOutput(
@@ -757,19 +701,15 @@ if __name__ == "__main__":
     const elapsed = (): number => Math.max(1, Date.now() - startTime);
 
     try {
+      const command = await this.getCommandBuilder().buildTagCommand(tag);
+
       // Behave: run once in the terminal (native output) + JSON to a file.
       if (this.isBehaveFramework()) {
-        const base = this.context?.commandBuilder
-          ? await this.context.commandBuilder.buildTagCommand(tag)
-          : `${await this.config.getIntelligentBehaveCommand()} --tags="${tag}" --no-skipped`;
-        const r = await this.runBehaveCapture(base, workingDir);
+        const r = await this.runBehaveCapture(command, workingDir);
         return { success: r.success, output: r.output, display: r.display, error: r.error, duration: elapsed(), scenarioResults: r.scenarioResults, scenarioOutputs: r.scenarioOutputs };
       }
 
       // Other frameworks (e.g. pytest-bdd): capture native output via spawn.
-      const command = this.context?.commandBuilder
-        ? await this.context.commandBuilder.buildTagCommand(tag)
-        : `${await this.config.getIntelligentBehaveCommand()} --tags="${tag}" --no-skipped --format=json`;
       const result = await this.executeCommandWithOutput(command, workingDir);
       const scenarioResults = await this.parseTestResults(result.output);
       return { success: result.success, output: result.output, display: result.output, error: result.error, duration: elapsed(), scenarioResults };

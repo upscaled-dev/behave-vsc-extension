@@ -135,9 +135,11 @@ suite('BehaveCommandBuilder Unit Tests', () => {
     };
 
     const command = await commandBuilder.buildScenarioCommand(options);
-    
-    // Should contain the full scenario name since the file doesn't exist for outline detection
-    assert.ok(command.includes('--name="1: Login with different credentials - username: admin, password: admin123"'));
+
+    // Example labels ("<index>: <outline name> - <values>") are detected by the
+    // strict prefix check (no file read needed) and the original outline name
+    // is used so behave runs the matching outline.
+    assert.ok(command.includes('--name="Login with different credentials"'));
   });
 
   test('Should handle complex scenario names', async () => {

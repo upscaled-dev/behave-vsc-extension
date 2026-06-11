@@ -31,6 +31,12 @@ export interface CommandBuilder {
   buildTagCommand(tag: string): Promise<string>;
 
   /**
+   * Build a command to run the entire test suite for this framework
+   * @returns Promise resolving to command string to execute all tests
+   */
+  buildRunAllCommand(): Promise<string>;
+
+  /**
    * Build a command to debug a specific scenario
    * @param options - Test execution options including file path, line number, scenario name
    * @returns Promise resolving to command string to debug the scenario

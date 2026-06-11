@@ -180,7 +180,11 @@ export class FrameworkFactory {
         if (configFile === "setup.cfg" || configFile === "pyproject.toml") {
           try {
             const content = fs.readFileSync(configPath, "utf8");
-            if (content.includes("[behave") || content.includes("behave")) {
+            // Match actual config sections only ("[behave]" in setup.cfg,
+            // "[tool.behave]" in pyproject.toml) — a bare substring check
+            // would treat any mention of the word "behave" (a comment, a
+            // dependency name) as behave configuration.
+            if (content.includes("[behave") || content.includes("[tool.behave")) {
               return true;
             }
           } catch {

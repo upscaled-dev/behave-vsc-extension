@@ -12,6 +12,7 @@ import { CucumberJsonParser } from "../utils/cucumber-json-parser";
 import { TestItemMapping } from "../utils/test-item-mapping";
 import { CommandArguments, CommandHandler, BehaveExtensionContext } from "../types";
 import { FrameworkFactory } from "../core/framework-factory";
+import { isScenarioOutlineExampleName } from "../utils/scenario-outline";
 
 interface OrganizationStrategy {
   strategyType: string;
@@ -239,14 +240,9 @@ export class CommandManager {
     return requested.some((r) => itemTags.includes(r));
   }
 
-  private isScenarioOutlineExample(scenarioName?: string): boolean {
-    if (!scenarioName) {return false;}
-    return /^\d+:\s*.+\s*-\s*/.test(scenarioName);
-  }
-
   public isScenarioOutline(filePath: string, lineNumber: number, scenarioName?: string): boolean {
     try {
-      if (scenarioName && this.isScenarioOutlineExample(scenarioName)) {return false;}
+      if (isScenarioOutlineExampleName(scenarioName)) {return false;}
       const lines = fs.readFileSync(filePath, "utf-8").split("\n");
       if (lineNumber < 1 || lineNumber > lines.length) {return false;}
       return lines[lineNumber - 1]?.trim().startsWith("Scenario Outline:") ?? false;

@@ -257,10 +257,8 @@ export class PytestResultParser {
   }
 
   private mapTestFileToFeatureFile(testFile: string): string {
-    if (testFile.includes("test_pytest_bdd_example.py")) {
-      return "tests/features/pytest_bdd_example.feature";
-    }
-    const baseName = testFile.replace(/\.py$/, "").replace(/^test_/, "");
+    const fileName = testFile.split(/[/\\]/).pop() ?? testFile;
+    const baseName = fileName.replace(/\.py$/, "").replace(/^test_/, "");
     return `tests/features/${baseName}.feature`;
   }
 

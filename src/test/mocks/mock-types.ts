@@ -96,6 +96,7 @@ export const createMockCommandBuilder = (): CommandBuilder => {
     buildScenarioCommand: () => Promise.resolve('behave test.feature:5'),
     buildFeatureCommand: () => Promise.resolve('behave test.feature'),
     buildTagCommand: () => Promise.resolve('behave --tags="@smoke"'),
+    buildRunAllCommand: () => Promise.resolve('behave'),
     getFrameworkName: () => 'behave',
   } as unknown as CommandBuilder;
 }; 

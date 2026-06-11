@@ -33,7 +33,7 @@ suite("Test Provider Scenario Outline Parent-Child Tests", () => {
     const mockFile = vscode.Uri.file("/test/features/test.feature");
 
     // Act
-    const testItem = (testProvider as any).createScenarioTestItem(mockFile, mockScenario);
+    const testItem = (testProvider as any).treeBuilder.createScenarioTestItem(mockFile, mockScenario);
 
     // Assert
     assert.strictEqual(testItem.id, "/test/features/test.feature:39");
@@ -60,7 +60,7 @@ suite("Test Provider Scenario Outline Parent-Child Tests", () => {
     const mockFile = vscode.Uri.file("/test/features/test.feature");
 
     // Act
-    const testItem = (testProvider as any).createScenarioTestItem(mockFile, mockScenario);
+    const testItem = (testProvider as any).treeBuilder.createScenarioTestItem(mockFile, mockScenario);
 
     // Assert
     assert.strictEqual(testItem.id, "/test/features/test.feature:39");

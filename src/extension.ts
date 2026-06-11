@@ -47,15 +47,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       framework = autoDetectedFramework;
       logger.info(`Auto-detected framework: ${framework}`);
     }
-    
-    // Validate framework setup and warn about conflicts
-    const validation = await FrameworkFactory.validateFrameworkSetup();
-    if (!validation.isValid) {
-      logger.warn("Framework setup validation failed", {
-        issues: validation.issues,
-        recommendation: validation.recommendation
-      });
-    }
+    // Note: autoDetect() already surfaces configuration conflicts to the user,
+    // so no separate validateFrameworkSetup() pass (which would re-read the
+    // same config files and re-glob the workspace) is needed here.
   }
   
   // Create the appropriate command builder
@@ -94,6 +88,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Inject context into TestExecutor so it can use CommandBuilder
   testExecutor.setContext(sharedContext);
+
+  // Rebuild the command builder when the framework setting changes so runs
+  // switch frameworks without requiring a window reload.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("behaveTestRunner.framework")) {
+        config.reload();
+        const newFramework = config.getFramework();
+        sharedContext.commandBuilder = FrameworkFactory.createCommandBuilder(newFramework, config);
+        logger.info(`Framework setting changed; command builder rebuilt for: ${newFramework}`);
+      }
+    })
+  );
 
   // Note: VS Code doesn't provide direct access to existing test controllers
   // We'll rely on the unique ID approach to avoid conflicts
@@ -178,9 +185,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           controllerId,
         });
 
-        // If test controller creation fails, this is a critical error
-        // since Test Explorer is core functionality
-        throw new Error(`Failed to create test controller: ${errorMessage}`);
+        // Degrade gracefully: skip Test Explorer integration but continue so
+        // commands and CodeLens (which CodeLens buttons depend on) still
+        // register. Aborting here would leave the extension with no commands
+        // at all.
+        testController = undefined;
+        testProvider = undefined;
+        vscode.window.showWarningMessage(
+          `Behave Test Runner: Test Explorer integration unavailable (${errorMessage}). Run/Debug commands and CodeLens remain available.`
+        );
       }
 
     // Register commands using the centralized command manager

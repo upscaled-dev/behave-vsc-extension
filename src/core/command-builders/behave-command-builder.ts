@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { CommandBuilder } from "./command-builder-interface";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 import { ExtensionConfig } from "../extension-config";
+import { escapeBehaveNameArg, escapeBehaveNameRegex } from "../../utils/behave-name-escape";
+import { isScenarioOutlineExampleName, extractOutlineName } from "../../utils/scenario-outline";
 import * as fs from "fs";
 
 /**
@@ -22,11 +24,7 @@ export class BehaveCommandBuilder implements CommandBuilder {
     const behaveCommand = await this.config.getIntelligentBehaveCommand();
 
     // Check if this is a scenario outline example
-    const isScenarioOutlineExample = this.isScenarioOutlineExample(
-      filePath,
-      lineNumber,
-      scenarioName
-    );
+    const isScenarioOutlineExample = isScenarioOutlineExampleName(scenarioName);
 
     // If scenarioName is a scenario outline (not an example), run all examples in one command
     if (
@@ -36,7 +34,7 @@ export class BehaveCommandBuilder implements CommandBuilder {
       fs.existsSync(filePath)
     ) {
       // Run a single command with --name="<outline name>"
-      let command = `${behaveCommand} "${filePath}" --name="${scenarioName}"`;
+      let command = `${behaveCommand} "${filePath}" --name="${escapeBehaveNameArg(scenarioName)}"`;
       
       // Add tags
       if (tags) {
@@ -65,10 +63,10 @@ export class BehaveCommandBuilder implements CommandBuilder {
     if (scenarioName) {
       // For scenario outline examples, we need to use the original outline name
       if (isScenarioOutlineExample) {
-        const originalOutlineName = this.extractOriginalOutlineName(scenarioName);
-        command += ` --name="${originalOutlineName}"`;
+        const originalOutlineName = extractOutlineName(scenarioName);
+        command += ` --name="${escapeBehaveNameArg(originalOutlineName)}"`;
       } else {
-        command += ` --name="${scenarioName}"`;
+        command += ` --name="${escapeBehaveNameArg(scenarioName)}"`;
       }
     }
 
@@ -128,6 +126,24 @@ export class BehaveCommandBuilder implements CommandBuilder {
   }
 
   /**
+   * Build a command to run the entire suite using behave syntax
+   */
+  public async buildRunAllCommand(): Promise<string> {
+    let command = await this.config.getIntelligentBehaveCommand();
+    if (this.config.tags) {
+      command += ` --tags="${this.config.tags}" --no-skipped`;
+    }
+    const format = this.config.outputFormat;
+    if (format && format !== "pretty") {
+      command += ` --format=${format}`;
+    }
+    if (this.config.dryRun) {
+      command += " --dry-run";
+    }
+    return command;
+  }
+
+  /**
    * Build a command to debug a specific scenario using behave syntax
    * For behave, debug mode uses --no-capture to show print statements
    */
@@ -147,15 +163,18 @@ export class BehaveCommandBuilder implements CommandBuilder {
       throw new Error("File path is required for debugging");
     }
 
-    const isExample = this.isScenarioOutlineExample(filePath, lineNumber, scenarioName);
+    const isExample = isScenarioOutlineExampleName(scenarioName);
     const isOutlineRun = Boolean(scenarioName) && !isExample && fs.existsSync(filePath);
 
     const args: string[] = isOutlineRun
-      ? [filePath, "--name", scenarioName as string]
+      ? [filePath, "--name", escapeBehaveNameRegex(scenarioName as string)]
       : [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
 
     if (!isOutlineRun && scenarioName) {
-      args.push("--name", isExample ? this.extractOriginalOutlineName(scenarioName) : scenarioName);
+      args.push(
+        "--name",
+        escapeBehaveNameRegex(isExample ? extractOutlineName(scenarioName) : scenarioName)
+      );
     }
 
     // Show print/stdout while debugging (behave captures it by default).
@@ -192,66 +211,4 @@ export class BehaveCommandBuilder implements CommandBuilder {
     return "behave";
   }
 
-  /**
-   * Check if a scenario is a scenario outline example
-   * (Extracted from TestExecutor)
-   */
-  private isScenarioOutlineExample(
-    filePath?: string,
-    lineNumber?: number,
-    scenarioName?: string
-  ): boolean {
-    if (!filePath || !lineNumber || !scenarioName || !fs.existsSync(filePath)) {
-      return false;
-    }
-
-    try {
-      const content = fs.readFileSync(filePath, "utf8");
-      const lines = content.split("\n");
-      
-      // Get the line at the specified line number (1-indexed)
-      const targetLine = lines[lineNumber - 1];
-      
-      if (!targetLine) {
-        return false;
-      }
-
-      // Check if the line contains example data (starts with |)
-      const trimmedLine = targetLine.trim();
-      if (trimmedLine.startsWith("|") && trimmedLine.endsWith("|")) {
-        return true;
-      }
-
-      // Also check if the scenario name contains example indicators
-      const isExample = 
-        scenarioName.includes(" - ") && 
-        (scenarioName.includes(":") || scenarioName.includes(","));
-        
-      return isExample;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Extract the original outline name from a scenario outline example name
-   * (Extracted from TestExecutor)
-   */
-  private extractOriginalOutlineName(scenarioName: string): string {
-    // Handle names like "1: Login with different credentials - username: admin, password: admin123, expected_result: dashboard"
-    if (scenarioName.includes(" - ")) {
-      const parts = scenarioName.split(" - ");
-      if (parts.length >= 2) {
-        // Remove the number prefix (e.g., "1: ")
-        let baseName = parts[0];
-        if (baseName?.match(/^\d+:\s*/)) {
-          baseName = baseName.replace(/^\d+:\s*/, "");
-        }
-        return baseName ?? scenarioName;
-      }
-    }
-    
-    // Handle other formats or return as-is
-    return scenarioName;
-  }
-} 
+}

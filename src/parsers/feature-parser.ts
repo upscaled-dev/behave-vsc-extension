@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { ParsedFeature, Scenario } from "../types/index";
 import { Logger } from "../utils/logger";
+import { isScenarioOutlineExampleName } from "../utils/scenario-outline";
 
 /**
  * Parser for Gherkin feature files
@@ -402,7 +403,7 @@ export class FeatureParser {
     const parsedFeature = this.parseFeatureContent(content);
     const scenarioOutlineExamples =
       parsedFeature?.scenarios.filter(
-        (s) => s.isScenarioOutline && /^\d+:\s*.+\s*-\s*/.test(s.name)
+        (s) => s.isScenarioOutline && isScenarioOutlineExampleName(s.name)
       ) ?? [];
 
     for (const line of lines) {

@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { CommandBuilder } from "./command-builder-interface";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 import { ExtensionConfig } from "../extension-config";
+import { isScenarioOutlineExampleName, extractOutlineName } from "../../utils/scenario-outline";
 
 /**
  * pytest-bdd Command Builder (pytest-bdd Adapter)
@@ -107,6 +110,21 @@ export class PytestBddCommandBuilder implements CommandBuilder {
   }
 
   /**
+   * Build a command to run the entire suite using pytest-bdd syntax
+   */
+  public buildRunAllCommand(): Promise<string> {
+    const pytestCommand = this.config.getPytestCommand();
+    let command = `${pytestCommand} -v --cucumber-json=cucumber-output.json`;
+    if (this.config.tags) {
+      command += ` -m "${this.convertTagToMarker(this.config.tags)}"`;
+    }
+    if (this.config.dryRun) {
+      command += " --collect-only";
+    }
+    return Promise.resolve(command);
+  }
+
+  /**
    * Build a command to debug a specific scenario using pytest-bdd syntax
    * For pytest, debug mode uses -s to show print statements and --pdb for debugging
    */
@@ -167,26 +185,59 @@ export class PytestBddCommandBuilder implements CommandBuilder {
   }
 
   /**
-   * Convert a .feature file path to the corresponding pytest test file path
-   * This is a heuristic conversion - in practice, this mapping might be configurable
+   * Convert a .feature file path to the corresponding pytest test file path.
+   * Candidate locations are checked for existence against the workspace root
+   * and the feature file's own directory tree before falling back to the
+   * conventional `tests/test_<name>.py`.
    */
   private convertFeaturePathToTestPath(featurePath: string): string {
     // Handle different feature file patterns
     const fileName = featurePath.split(/[/\\]/).pop() ?? "";
     const baseName = fileName.replace(".feature", "");
-    
-    // Look for test files in common locations with better heuristics
+    const sanitized = baseName.replace(/[^a-zA-Z0-9]/g, "_");
+
+    // Look for test files in common locations
     const possiblePaths = [
       `tests/test_${baseName}.py`, // Prefer tests/ directory
       `test_${baseName}.py`,
       `tests/${baseName}_test.py`,
       `${baseName}_test.py`,
-      `test_${baseName.replace(/[^a-zA-Z0-9]/g, "_")}.py`,
-      `tests/test_${baseName.replace(/[^a-zA-Z0-9]/g, "_")}.py`
+      `tests/test_${sanitized}.py`,
+      `test_${sanitized}.py`,
+      `tests/step_defs/test_${baseName}.py`,
+      `tests/step_defs/test_${sanitized}.py`,
     ];
 
-    // For now, return the first possibility (tests/test_*.py)
-    // In a real implementation, we would check which file actually exists
+    // Roots to resolve the relative candidates against: the workspace root
+    // (the command's working directory) plus the feature file's directory and
+    // its parents (covers features/ next to tests/ layouts).
+    const featureDir = path.dirname(featurePath);
+    const roots = [
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      featureDir,
+      path.dirname(featureDir),
+      path.dirname(path.dirname(featureDir)),
+    ].filter((root): root is string => Boolean(root));
+
+    const workspaceRoot = roots[0];
+    for (const root of roots) {
+      for (const candidate of possiblePaths) {
+        const absolute = path.join(root, candidate);
+        try {
+          if (fs.existsSync(absolute)) {
+            // Keep the command's path relative to the working directory when
+            // possible; otherwise use the absolute path.
+            return workspaceRoot && absolute.startsWith(workspaceRoot)
+              ? path.relative(workspaceRoot, absolute)
+              : absolute;
+          }
+        } catch {
+          // Unreadable root — try the next candidate.
+        }
+      }
+    }
+
+    // Nothing found: fall back to the conventional location.
     return possiblePaths[0] ?? `tests/test_${baseName}.py`;
   }
 
@@ -197,38 +248,14 @@ export class PytestBddCommandBuilder implements CommandBuilder {
    */
   private convertScenarioNameToTestFunction(scenarioName: string): string {
     // Remove scenario outline example details if present
-    let cleanName = scenarioName;
-    if (scenarioName.includes(" - ")) {
-      const parts = scenarioName.split(" - ");
-      cleanName = parts[0] ?? scenarioName;
-      
-      // Remove number prefix from scenario outline examples
-      if (cleanName?.match(/^\d+:\s*/)) {
-        cleanName = cleanName.replace(/^\d+:\s*/, "");
-      }
-    }
+    let cleanName = isScenarioOutlineExampleName(scenarioName)
+      ? extractOutlineName(scenarioName)
+      : scenarioName;
 
     // Handle scenario outline examples with parameters
     if (cleanName.includes("<") && cleanName.includes(">")) {
       // For scenario outlines, use the base scenario name
       cleanName = cleanName.replace(/<[^>]+>/g, "").trim();
-    }
-
-    // Special mappings for common scenario names
-    const scenarioMappings: Record<string, string> = {
-      "Basic login functionality": "test_basic_login",
-      "Login with invalid credentials": "test_invalid_login", 
-      "User registration": "test_user_registration",
-      "Login with different user types": "test_login_different_user_types",
-      "Form validation for registration": "test_form_validation_registration",
-      "Concurrent user login simulation": "test_concurrent_user_login",
-      "Security validation for login attempts": "test_security_validation_login"
-    };
-
-    // Check if we have a direct mapping
-    const mappedName = scenarioMappings[cleanName];
-    if (mappedName) {
-      return mappedName;
     }
 
     // Convert to snake_case and add test_ prefix

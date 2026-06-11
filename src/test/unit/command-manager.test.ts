@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { CommandManager } from "../../commands/command-manager";
+import { isScenarioOutlineExampleName } from "../../utils/scenario-outline";
 
 suite("Command Manager Unit Tests", () => {
   let commandManager: CommandManager;
@@ -16,19 +17,16 @@ suite("Command Manager Unit Tests", () => {
   });
 
   test("Should detect scenario outline examples correctly", () => {
-    // Test scenario outline example detection
-    const isExample1 = (commandManager as any).isScenarioOutlineExample(
+    // Outline-example detection lives in the shared scenario-outline util,
+    // which CommandManager (and every other layer) delegates to.
+    const isExample1 = isScenarioOutlineExampleName(
       "1: Load testing with multiple users - user_count: 10, max_response_time: 2"
     );
-    const isExample2 = (commandManager as any).isScenarioOutlineExample(
+    const isExample2 = isScenarioOutlineExampleName(
       "2: Login with different credentials - username: admin, password: admin123, expected_result: dashboard"
     );
-    const isRegularScenario = (commandManager as any).isScenarioOutlineExample(
-      "Basic smoke test"
-    );
-    const isUndefined = (commandManager as any).isScenarioOutlineExample(
-      undefined
-    );
+    const isRegularScenario = isScenarioOutlineExampleName("Basic smoke test");
+    const isUndefined = isScenarioOutlineExampleName(undefined);
 
     assert.strictEqual(
       isExample1,

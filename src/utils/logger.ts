@@ -9,7 +9,7 @@ export enum LogLevel {
 }
 
 export class Logger {
-  private static instance: Logger;
+  private static instance: Logger | undefined;
   private readonly outputChannel: vscode.OutputChannel;
   private logLevel: LogLevel;
 
@@ -68,5 +68,10 @@ export class Logger {
 
   public dispose(): void {
     this.outputChannel.dispose();
+    // Reset the singleton so a later activation in the same extension host
+    // gets a fresh output channel instead of this disposed one.
+    if (Logger.instance === this) {
+      Logger.instance = undefined;
+    }
   }
 }
