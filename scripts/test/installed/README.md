@@ -33,8 +33,13 @@ tested VSIX, archive and bundle hashes, actual host and Python versions, CLI
 registry, exact command arguments, named environment overrides, journey JSON,
 and host logs. Inherited environment variables and credentials are not recorded.
 
-`.github/workflows/installed-journeys.yml` runs the same command on Windows,
-Ubuntu and macOS for both pinned hosts. It supports manual dispatch, pushes to
+`.github/workflows/installed-journeys.yml` runs the same command on
+`windows-2025`, `ubuntu-24.04` and `macos-15` for both pinned hosts. Python
+3.12.10 is pinned because the official `actions/python-versions`
+[binary catalog](https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json)
+provides a common supported version for these images. Local Python 3.12.11 and
+3.11 results are separate evidence; they do not establish this CI matrix.
+The workflow supports manual dispatch, pushes to
 `validation/installed-*` branches, and pull requests changing the workflow or
 harness. It grants only `contents: read`, limits each job to 30 minutes, and
 uploads evidence on every outcome. It packages without changing the version and

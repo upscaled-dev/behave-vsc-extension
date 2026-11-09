@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-2025, macos-15]
         host: ['1.142.0', '1.99.0']
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +30,7 @@ jobs:
           cache: npm
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12.11'
+          python-version: '3.12.10'
       - name: Install pinned dependencies
         run: |
           npm ci
