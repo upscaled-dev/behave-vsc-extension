@@ -45,6 +45,9 @@ harness. It grants only `contents: read`, limits each job to 30 minutes, and
 uploads evidence on every outcome. It packages without changing the version and
 does not publish. Workflow presence does not establish platform acceptance:
 Windows and other remote platforms require successful retained journey artifacts.
+Fresh installation uses `npm ci` against the committed lockfile. Node dependency
+installation, Python installation, runner boundary checks and test compilation
+are separate steps so each failure stops that job on every platform.
 
 This slice explicitly disables `alexkrechik.cucumberautocomplete`. Default
 companion coexistence remains OPEN: Cucumber 3.1 can contribute the original

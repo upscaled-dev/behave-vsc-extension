@@ -31,14 +31,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.10'
-      - name: Install pinned dependencies
-        run: |
-          npm ci
-          python -m pip install -r src/test/fixtures/execution/requirements.txt
-      - name: Check runner boundaries and compile host helper
-        run: |
-          node --test scripts/test/installed/run.test.cjs
-          npm run compile-tests
+      - name: Install locked Node dependencies
+        run: npm ci
+      - name: Install pinned Python dependencies
+        run: python -m pip install -r src/test/fixtures/execution/requirements.txt
+      - name: Check runner boundaries
+        run: node --test scripts/test/installed/run.test.cjs
+      - name: Compile host helper
+        run: npm run compile-tests
       - name: Build and verify the packaged extension
         run: npm run package:vsix
       - name: Install Linux display support
