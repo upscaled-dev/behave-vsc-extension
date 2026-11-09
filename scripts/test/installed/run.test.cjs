@@ -19,9 +19,31 @@ test('official CLI layouts resolve on macOS, Linux and Windows', () => {
     ['win32', 'C:\\Program Files\\VS Code\\Code.exe', 'C:\\Program Files\\VS Code\\resources\\app\\out\\cli.js'],
   ];
   for (const [platform, executable, script] of cases) {
-    assert.deepEqual(electronCli(executable, platform, file => file === script), [executable, script]);
+    assert.deepEqual(electronCli(executable, platform, file => file === script,
+      () => '"%~dp0..\\Code.exe" "%~dp0..\\resources\\app\\out\\cli.js" %*'), [executable, script]);
   }
   assert.throws(() => electronCli('/missing/code', 'linux', () => false), /CLI script is missing/u);
+});
+
+test('Windows CLI follows the official versioned payload path without executing the command file', () => {
+  const executable = 'D:\\VS Code & literal\\Code.exe';
+  const script = 'D:\\VS Code & literal\\04c0d99f4f\\resources\\app\\out\\cli.js';
+  const args = electronCli(executable, 'win32', file => file === script, (file, encoding) => {
+    assert.equal(file, 'D:\\VS Code & literal\\bin\\code.cmd');
+    assert.equal(encoding, 'utf8');
+    return '@echo off\r\n"%~dp0..\\Code.exe" "%~dp0..\\04c0d99f4f\\resources\\app\\out\\cli.js" %*\r\n';
+  });
+  assert.deepEqual(args, [executable, script]);
+});
+
+test('Windows CLI rejects ambiguous and unsupported command file targets', () => {
+  const executable = 'D:\\VS Code\\Code.exe';
+  const legacy = '"%~dp0..\\resources\\app\\out\\cli.js"';
+  const versioned = '"%~dp0..\\04c0d99f4f\\resources\\app\\out\\cli.js"';
+  assert.throws(() => electronCli(executable, 'win32', () => true, () => `${legacy}\r\n${versioned}`), /exactly one/u);
+  assert.throws(() => electronCli(executable, 'win32', () => true,
+    () => '"%~dp0..\\..\\outside\\resources\\app\\out\\cli.js"'), /exactly one/u);
+  assert.throws(() => electronCli(executable, 'win32', () => false, () => legacy), /exactly one/u);
 });
 
 test('command arguments reach the child literally and inherited secrets stay out of evidence', async t => {

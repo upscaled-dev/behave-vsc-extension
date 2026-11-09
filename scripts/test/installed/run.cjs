@@ -26,10 +26,24 @@ function parseOptions(args) {
   return values;
 }
 
-function electronCli(executable, platform = process.platform, exists = fs.existsSync) {
+function electronCli(executable, platform = process.platform, exists = fs.existsSync, read = fs.readFileSync) {
   const paths = platform === 'win32' ? path.win32 : path.posix;
-  const script = paths.resolve(paths.dirname(executable), platform === 'darwin'
-    ? '../Resources/app/out/cli.js' : 'resources/app/out/cli.js');
+  const root = paths.dirname(executable);
+  let script;
+  if (platform === 'win32') {
+    const command = read(paths.join(root, 'bin/code.cmd'), 'utf8');
+    const candidates = [...command.matchAll(/"%~dp0\.\.\\((?:[a-f0-9]{10}\\)?resources\\app\\out\\cli\.js)"/giu)]
+      .map(match => paths.resolve(root, match[1]));
+    for (const candidate of candidates) {
+      const relative = paths.relative(root, candidate);
+      assert.ok(relative && !relative.startsWith('..') && !paths.isAbsolute(relative), 'Official CLI script must remain inside the VS Code installation');
+    }
+    const existing = candidates.filter(exists);
+    assert.equal(existing.length, 1, 'Official bin/code.cmd must name exactly one existing CLI script');
+    [script] = existing;
+  } else {
+    script = paths.resolve(root, platform === 'darwin' ? '../Resources/app/out/cli.js' : 'resources/app/out/cli.js');
+  }
   assert.ok(exists(script), `Official VS Code CLI script is missing: ${script}`);
   return [executable, script];
 }

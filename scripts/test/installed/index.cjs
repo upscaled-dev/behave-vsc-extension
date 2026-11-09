@@ -147,8 +147,9 @@ async function definitionJourney(config, document, evidence) {
   const line = document.getText().split(/\r?\n/).findIndex(text => text.includes(`I record "${config.selectedEntry}"`));
   assert.ok(line >= 0, 'The populated feature must contain the selected step');
   const position = new vscode.Position(line, 12);
-  const editor = await vscode.window.showTextDocument(document);
-  editor.selection = new vscode.Selection(position, position);
+  await vscode.window.showTextDocument(document, {
+    selection: new vscode.Range(position, position), preserveFocus: false, preview: false,
+  });
   const definitions = await vscode.commands.executeCommand('vscode.executeDefinitionProvider', document.uri, position);
   evidence.candidates = (definitions ?? []).map(definition => {
     const uri = definition.uri ?? definition.targetUri;
@@ -163,19 +164,32 @@ async function definitionJourney(config, document, evidence) {
   const range = definition.range ?? definition.targetSelectionRange;
   assert.ok(sameFile(uri.fsPath, config.stepSource), 'The definition must target the selected Python step file');
   assert.equal(range.start.line, config.definitionLine);
+  evidence.provider = { path: uri.fsPath, line: range.start.line + 1 };
+  const describeEditor = editor => editor ? {
+    path: editor.document.uri.fsPath, viewColumn: editor.viewColumn,
+    selection: { start: { line: editor.selection.start.line + 1, character: editor.selection.start.character },
+      end: { line: editor.selection.end.line + 1, character: editor.selection.end.character } },
+  } : null;
   const revealed = observation('F12 editor selection at the Python step definition', check => {
     const active = vscode.window.onDidChangeActiveTextEditor(check);
     const selection = vscode.window.onDidChangeTextEditorSelection(check);
     return { dispose() { active.dispose(); selection.dispose(); } };
   }, () => {
     const active = vscode.window.activeTextEditor;
+    evidence.lastObservedEditor = describeEditor(active);
     return sameFile(active?.document.uri.fsPath, config.stepSource) && active.selection.start.line === config.definitionLine
       ? { path: active.document.uri.fsPath, line: active.selection.start.line + 1 } : undefined;
   });
   try {
+    evidence.beforeCommand = { expectedSource: { path: document.uri.fsPath, line: position.line + 1, character: position.character },
+      activeEditor: describeEditor(vscode.window.activeTextEditor) };
+    const source = evidence.beforeCommand.activeEditor;
+    assert.ok(sameFile(source?.path, document.uri.fsPath), 'F12 must start in the expected feature editor');
+    const expectedPosition = { line: position.line + 1, character: position.character };
+    assert.deepEqual(source.selection.start, expectedPosition, 'F12 must start at the selected step position');
+    assert.deepEqual(source.selection.end, expectedPosition, 'F12 source selection must be collapsed at the selected step');
     await vscode.commands.executeCommand('editor.action.revealDefinition');
     revealed.check();
-    evidence.provider = { path: uri.fsPath, line: range.start.line + 1 };
     evidence.editor = await revealed.promise;
     return evidence;
   } finally { revealed.dispose(); }

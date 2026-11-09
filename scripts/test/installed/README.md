@@ -23,7 +23,9 @@ existing absolute VS Code executable; its real version is checked. Optional
 `--extensions-root` reuses an isolated extension directory and preserves it.
 Optional `--framework behave` or `--framework pytest-bdd` selects one framework.
 
-The runner invokes Electron with argument arrays and `shell: false`. Only the
+The runner invokes Electron with argument arrays and `shell: false`. The
+official adjacent `bin/code.cmd` is read as data on Windows to select its exact
+legacy or versioned CLI payload; the command file is never executed. Only the
 test driver is a development extension. It uses the lockfile-pinned test SDK
 2.5.2 for downloads and owned process termination. Failed or cancelled commands
 terminate only their own process tree. Short temporary profiles are copied into
@@ -98,7 +100,9 @@ observation fails. The native result file shape
 is an internal host detail, so an incompatible host fails this check explicitly.
 
 The definition journey checks the registered definition provider and executes
-the editor's F12 command, then observes the Python editor selection. The Debug
+the editor's F12 command, then observes the Python editor selection. It opens
+the source editor with the step selection in one awaited call and records the
+expected source cursor and last observed editor state for failure diagnosis. The Debug
 journey uses the installed Microsoft debugger, stops at a real Python source
 breakpoint, checks the top stack frame's file and line through DAP, continues,
 and requires session termination, exactly one DAP exit with code zero, and the
