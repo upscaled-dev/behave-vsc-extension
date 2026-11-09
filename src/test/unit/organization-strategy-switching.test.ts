@@ -1,5 +1,6 @@
 import { suite, test, setup } from 'mocha';
-import { assert } from 'chai';
+import * as assert from "assert";
+import * as vscode from "vscode";
 import { CommandManager } from '../../commands/command-manager';
 import { TestOrganizationManager } from '../../core/test-organization';
 import { Logger } from '../../utils/logger';
@@ -29,7 +30,7 @@ suite('Organization Strategy Switching Tests', () => {
         clearCache: () => {},
       },
       discoverTests: async () => {},
-      forceRefreshTestExplorer: async () => {},
+      refreshTests: async () => mockTestProvider.discoverTests(),
     };
     
     // Create mock context
@@ -57,69 +58,103 @@ suite('Organization Strategy Switching Tests', () => {
   test('Should have all required organization strategies available', () => {
     const strategies = organizationManager.getAvailableStrategies();
     
-    assert.isArray(strategies);
-    assert.isAtLeast(strategies.length, 5, 'Should have at least 5 strategies');
+    assert.ok(Array.isArray(strategies));
+    assert.ok(strategies.length >= 5, 'Should have at least 5 strategies');
     
     const strategyTypes = strategies.map(s => s.strategy.strategyType);
-    assert.include(strategyTypes, 'TagBasedOrganization');
-    assert.include(strategyTypes, 'FileBasedOrganization'); 
-    assert.include(strategyTypes, 'ScenarioTypeOrganization');
-    assert.include(strategyTypes, 'FlatOrganization');
-    assert.include(strategyTypes, 'FeatureBasedOrganization');
+    assert.ok(strategyTypes.includes('TagBasedOrganization'));
+    assert.ok(strategyTypes.includes('FileBasedOrganization'));
+    assert.ok(strategyTypes.includes('ScenarioTypeOrganization'));
+    assert.ok(strategyTypes.includes('FlatOrganization'));
+    assert.ok(strategyTypes.includes('FeatureBasedOrganization'));
   });
 
   test('Should switch to TagBasedOrganization correctly', async () => {
     await (commandManager as any).setStrategyByValue('tag');
     
     const newStrategy = organizationManager.getStrategy();
-    assert.equal(newStrategy.strategyType, 'TagBasedOrganization');
+    assert.strictEqual(newStrategy.strategyType, 'TagBasedOrganization');
   });
 
   test('Should switch to FileBasedOrganization correctly', async () => {
     await (commandManager as any).setStrategyByValue('file');
     
     const strategy = organizationManager.getStrategy();
-    assert.equal(strategy.strategyType, 'FileBasedOrganization');
+    assert.strictEqual(strategy.strategyType, 'FileBasedOrganization');
   });
 
   test('Should switch to ScenarioTypeOrganization correctly', async () => {
     await (commandManager as any).setStrategyByValue('scenarioType');
     
     const strategy = organizationManager.getStrategy();
-    assert.equal(strategy.strategyType, 'ScenarioTypeOrganization');
+    assert.strictEqual(strategy.strategyType, 'ScenarioTypeOrganization');
   });
 
   test('Should switch to FlatOrganization correctly', async () => {
     await (commandManager as any).setStrategyByValue('flat');
     
     const strategy = organizationManager.getStrategy();
-    assert.equal(strategy.strategyType, 'FlatOrganization');
+    assert.strictEqual(strategy.strategyType, 'FlatOrganization');
   });
 
   test('Should switch to FeatureBasedOrganization correctly', async () => {
     await (commandManager as any).setStrategyByValue('feature');
     
     const strategy = organizationManager.getStrategy();
-    assert.equal(strategy.strategyType, 'FeatureBasedOrganization');
+    assert.strictEqual(strategy.strategyType, 'FeatureBasedOrganization');
   });
 
-  test('Should call all refresh methods when switching strategies', async () => {
-    let cacheCleared = false;
-    let testsDiscovered = false;
-    let explorerRefreshed = false;
-    
-    mockTestProvider.discoveryManager.clearCache = () => { cacheCleared = true; };
-    mockTestProvider.discoverTests = async () => { testsDiscovered = true; };
-    mockTestProvider.forceRefreshTestExplorer = async () => { explorerRefreshed = true; };
-    
-    await (commandManager as any).setStrategyByValue('file');
-    
-    // Allow time for async operations
-    await new Promise(resolve => setTimeout(resolve, 150));
-    
-    assert.isTrue(cacheCleared, 'Cache should be cleared');
-    assert.isTrue(testsDiscovered, 'Tests should be rediscovered');
-    assert.isTrue(explorerRefreshed, 'Test Explorer should be refreshed');
+  test('Should await one discovery using the selected organization strategy', async () => {
+    let releaseDiscovery!: () => void;
+    const discoveryCompleted = new Promise<void>((resolve) => { releaseDiscovery = resolve; });
+    let discoveryStarted!: () => void;
+    const started = new Promise<void>((resolve) => { discoveryStarted = resolve; });
+    let discoveries = 0;
+    let completed = false;
+    let discoveredStrategy: string | undefined;
+
+    mockTestProvider.discoverTests = async () => {
+      discoveries++;
+      discoveredStrategy = organizationManager.getStrategy().strategyType;
+      discoveryStarted();
+      await discoveryCompleted;
+    };
+    const changing = (commandManager as any).setStrategyByValue('file').then(() => { completed = true; });
+
+    await started;
+    assert.strictEqual(discoveredStrategy, 'FileBasedOrganization');
+    assert.strictEqual(completed, false, 'The organization command must wait for discovery completion');
+    releaseDiscovery();
+    await changing;
+    assert.strictEqual(completed, true);
+    assert.strictEqual(discoveries, 1, 'A strategy change rebuilds the tree once');
+  });
+
+  test('A superseded failure cannot roll back or notify after the newer strategy succeeds', async () => {
+    const changes: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    mockTestProvider.refreshTests = () => new Promise<void>((resolve, reject) => {changes.push({ resolve, reject });});
+    const showInformation = vscode.window.showInformationMessage;
+    const messages: string[] = [];
+    const errors: string[] = [];
+    (vscode.window as any).showInformationMessage = (message: string) => {messages.push(message); return Promise.resolve(undefined);};
+    commandManager['showErrorMessage'] = (message: string) => {errors.push(message);};
+    try {
+      const older = commandManager['setStrategyByValue']('file');
+      const newer = commandManager['setStrategyByValue']('flat');
+      assert.strictEqual(changes.length, 2);
+      changes[1]!.resolve();
+      await newer;
+      const committed = organizationManager.getStrategy();
+      assert.strictEqual(committed.strategyType, 'FlatOrganization');
+      changes[0]!.reject(new Error('superseded discovery failed'));
+      await older;
+      assert.strictEqual(organizationManager.getStrategy(), committed);
+      assert.strictEqual(messages.length, 1);
+      assert.strictEqual(errors.length, 0);
+      assert.strictEqual(commandManager['pendingOrganizationChange'], undefined);
+    } finally {
+      (vscode.window as any).showInformationMessage = showInformation;
+    }
   });
 
   test('Should persist strategy changes across calls', async () => {
@@ -132,12 +167,12 @@ suite('Organization Strategy Switching Tests', () => {
     await (commandManager as any).setStrategyByValue('flat');
     const flatStrategy = organizationManager.getStrategy();
     
-    assert.equal(tagStrategy.strategyType, 'TagBasedOrganization');
-    assert.equal(fileStrategy.strategyType, 'FileBasedOrganization');
-    assert.equal(flatStrategy.strategyType, 'FlatOrganization');
+    assert.strictEqual(tagStrategy.strategyType, 'TagBasedOrganization');
+    assert.strictEqual(fileStrategy.strategyType, 'FileBasedOrganization');
+    assert.strictEqual(flatStrategy.strategyType, 'FlatOrganization');
     
     // Final strategy should be flat
-    assert.equal(organizationManager.getStrategy().strategyType, 'FlatOrganization');
+    assert.strictEqual(organizationManager.getStrategy().strategyType, 'FlatOrganization');
   });
 
   test('Should handle invalid strategy values gracefully', async () => {
@@ -149,18 +184,18 @@ suite('Organization Strategy Switching Tests', () => {
     
     // Strategy should fall back to first available strategy
     const finalStrategy = organizationManager.getStrategy();
-    assert.isDefined(finalStrategy);
+    assert.notStrictEqual(finalStrategy, undefined);
   });
 
   test('Should provide correct strategy descriptions', () => {
     const strategies = organizationManager.getAvailableStrategies();
     
     for (const strategy of strategies) {
-      assert.isString(strategy.name);
-      assert.isString(strategy.description);
-      assert.isNotEmpty(strategy.name);
-      assert.isNotEmpty(strategy.description);
-      assert.isDefined(strategy.strategy.getDescription());
+      assert.strictEqual(typeof strategy.name, "string");
+      assert.strictEqual(typeof strategy.description, "string");
+      assert.ok(strategy.name.length > 0);
+      assert.ok(strategy.description.length > 0);
+      assert.notStrictEqual(strategy.strategy.getDescription(), undefined);
     }
   });
 
@@ -169,13 +204,13 @@ suite('Organization Strategy Switching Tests', () => {
     
     for (const strategy of strategies) {
       // Test that the strategy has required methods
-      assert.isFunction(strategy.strategy.getDescription);
-      assert.isString(strategy.strategy.strategyType);
+      assert.strictEqual(typeof strategy.strategy.getDescription, "function");
+      assert.strictEqual(typeof strategy.strategy.strategyType, "string");
       
       // Test that description is not empty
       const description = strategy.strategy.getDescription();
-      assert.isString(description);
-      assert.isNotEmpty(description);
+      assert.strictEqual(typeof description, "string");
+      assert.ok(description.length > 0);
     }
   });
 }); 

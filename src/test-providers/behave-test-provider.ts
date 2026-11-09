@@ -7,23 +7,19 @@ import { ExtensionConfig } from "../core/extension-config";
 import { TestDiscoveryManager } from "../core/test-discovery-manager";
 import { TestOrganizationManager } from "../core/test-organization";
 import * as path from 'path';
-import { isScenarioOutlineExampleName, extractOutlineName } from "../utils/scenario-outline";
-import { TestItemMapping } from "../utils/test-item-mapping";
+import { TestItemMapping, ScenarioResultLookup } from "../utils/test-item-mapping";
 import { TestTreeBuilder } from "./test-tree-builder";
+import { testExplorerRunPlan } from "./test-explorer-run-plan";
+import { TestDiscoveryLifecycle } from "./test-discovery-lifecycle";
 import { BehaveJsonParser } from "../utils/behave-json-parser";
 import { PytestResultParser } from "../utils/pytest-result-parser";
 import { CucumberJsonParser } from "../utils/cucumber-json-parser";
+import { projectForFile } from "../core/project-context";
 import { FrameworkFactory } from "../core/framework-factory";
 
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
-
-/** A run result plus the per-scenario status and output maps. */
-type ScenarioRunResult = import("../types").TestRunResult & {
-  scenarioResults?: Record<string, string>;
-  scenarioOutputs?: Record<string, string>;
-};
 
 export class BehaveTestProvider {
   private readonly testController: vscode.TestController;
@@ -35,6 +31,16 @@ export class BehaveTestProvider {
   private readonly testStatusByLocation: Map<string, "started" | "passed" | "failed"> =
     new Map();
   private isTestRunning = false;
+  private readonly discovery: TestDiscoveryLifecycle;
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly fileWatchers: vscode.FileSystemWatcher[] = [];
+  private watchedPatterns = "";
+  private autoDiscover: boolean;
+  private disposed = false;
+  private disposal: Promise<void> | undefined;
+  private runCancellation: vscode.CancellationTokenSource | undefined;
+  private readonly ownsContext: boolean;
+  private observedDiscovery: Promise<void> | undefined;
   // Store scenario outline parent-child relationships for hierarchy view
   private scenarioOutlineParents = new Map<string, string>(); // exampleId -> parentId
 
@@ -43,20 +49,23 @@ export class BehaveTestProvider {
   }
 
   private createDefaultContext(): BehaveExtensionContext {
-    const logger = Logger.create();
     const config = ExtensionConfig.create();
-    const testExecutor = TestExecutor.create();
-    const discoveryManager = TestDiscoveryManager.create();
-    const organizationManager = TestOrganizationManager.create();
+    let commandBuilder: BehaveExtensionContext["commandBuilder"];
+    try {
+      commandBuilder = FrameworkFactory.createCommandBuilder(config.getFramework(), config);
+    } catch (error) {
+      config.dispose();
+      throw error;
+    }
+    const logger = new Logger();
+    const testExecutor = TestExecutor.create(undefined, undefined, undefined, config, logger);
+    const discoveryManager = TestDiscoveryManager.create(logger, config);
+    const organizationManager = TestOrganizationManager.create(logger);
     const featureParser = FeatureParser.create(logger);
     const behaveJsonParser = BehaveJsonParser.create(logger);
     const pytestResultParser = PytestResultParser.create(logger);
     const cucumberJsonParser = CucumberJsonParser.create(logger);
     const testItemMapping = TestItemMapping.create();
-    
-    // Create command builder with default framework (behave)
-    const framework = config.getFramework();
-    const commandBuilder = FrameworkFactory.createCommandBuilder(framework, config);
 
     return {
       logger,
@@ -76,22 +85,23 @@ export class BehaveTestProvider {
   constructor(testController: vscode.TestController, context?: BehaveExtensionContext) {
     this.testController = testController;
     this.discoveredTests = new Map();
+    this.ownsContext = !context;
     this.context = context ?? this.createDefaultContext();
+    this.autoDiscover = this.automaticDiscoveryEnabled();
     this.treeBuilder = new TestTreeBuilder(
       this.testController,
       this.context,
       this.discoveredTests,
       this.scenarioOutlineParents
     );
-    this.setupTestController();
-
-    // Discover tests immediately after setup
-    this.discoverTests().catch((_error) => {
-      // console.error("Error during initial test discovery:", _error);
+    this.discovery = new TestDiscoveryLifecycle(async (isCurrent, token) => {
+      await this.treeBuilder.discoverTests(isCurrent, token);
+      if (isCurrent()) {this.restoreTestStatus();}
     });
-
-    // Set up file watcher for feature files
+    this.setupTestController();
     this.setupFileWatcher();
+    this.disposables.push(this.context.config.addChangeListener(() => this.updateDiscoverySettings()),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => this.updateDiscoverySettings()));
   }
 
   private setupTestController(): void {
@@ -101,11 +111,13 @@ export class BehaveTestProvider {
       }
     };
 
+    this.testController.refreshHandler = () => this.discoverTests();
+
     const runProfile = this.testController.createRunProfile(
       "Run",
       vscode.TestRunProfileKind.Run,
-      async (request) => {
-        await this.runTests(request);
+      async (request, token) => {
+        await this.runTests(request, token);
       }
     );
     runProfile.configureHandler = () => {};
@@ -113,15 +125,12 @@ export class BehaveTestProvider {
     const debugProfile = this.testController.createRunProfile(
       "Debug",
       vscode.TestRunProfileKind.Debug,
-      async (request) => {
-        await this.debugTests(request);
+      async (request, token) => {
+        await this.debugTests(request, token);
       }
     );
     debugProfile.configureHandler = () => {};
-  }
-
-  private saveTestStatus(): void {
-    // Preserve existing test status cache - don't clear it.
+    this.disposables.push(runProfile, debugProfile);
   }
 
   public updateTestStatus(
@@ -205,96 +214,38 @@ export class BehaveTestProvider {
     this.testController.items.forEach(restoreStatusRecursively);
   }
 
-  public async discoverTests(): Promise<void> {
-    try {
-      this.saveTestStatus();
-      await this.treeBuilder.discoverTests();
-      this.restoreTestStatus();
-    } catch (error) {
-      const errorMessage = errMsg(error);
-      this.context.logger.error(`Failed to discover tests: ${errorMessage}`, {
-        pattern: this.context.config.testFilePattern,
-      });
-
-      vscode.window.showErrorMessage(
-        `Test discovery failed: ${errorMessage}. Please check your configuration.`
-      );
-    }
+  public discoverTests(): Promise<void> {
+    return this.discovery.refresh();
   }
 
+  private observeDiscovery(pending: Promise<void>): void {
+    if (this.observedDiscovery === pending) {return;}
+    this.observedDiscovery = pending;
+    const clear = () => {if (this.observedDiscovery === pending) {this.observedDiscovery = undefined;}};
+    pending.then(clear, (error) => {
+      clear();
+      if (!this.disposed) {this.reportDiscoveryError(error);}
+    });
+  }
+
+  private reportDiscoveryError(error: unknown): void {
+    const message = errMsg(error);
+    this.context.logger.error("Test discovery failed", { error: message, pattern: this.context.config.testFilePattern });
+    vscode.window.showErrorMessage(`Test discovery failed: ${message}. Please check your configuration and refresh tests.`);
+  }
+
+  // Retained for callers adding an explicit file outside workspace discovery.
   public async addFeatureFileToTestController(file: vscode.Uri): Promise<void> {
-    await this.treeBuilder.addFeatureFileToTestController(file);
+    if (this.disposed) {return;}
+    await this.treeBuilder.addFeatureFileToTestController(file, () => !this.disposed);
   }
 
-  /**
-   * Yields every leaf descendant of a test item. Used so result-mapping loops work
-   * for any depth (e.g. Outline → ExamplesBlock → Example).
-   */
-  private collectLeafTestItems(item: vscode.TestItem): vscode.TestItem[] {
-    const leaves: vscode.TestItem[] = [];
-    const visit = (node: vscode.TestItem): void => {
-      if (node.children.size === 0) {
-        leaves.push(node);
-        return;
-      }
-      node.children.forEach((child) => visit(child));
-    };
-    visit(item);
-    return leaves;
+  public refreshTests(): Promise<void> {
+    return this.discovery.refresh({ invalidate: true });
   }
 
-  public async refreshTests(): Promise<void> {
-    try {
-      // discoverTests() already forces a cache refresh, so no separate
-      // refreshCache() pass is needed here.
-      this.testController.items.replace([]);
-      this.discoveredTests.clear();
-
-      await this.discoverTests();
-    } catch (error) {
-      const errorMessage = errMsg(error);
-      this.context.logger.error(`Failed to refresh tests: ${errorMessage}`);
-
-      vscode.window.showErrorMessage(
-        `Failed to refresh tests: ${errorMessage}. Please try again.`
-      );
-    }
-  }
-
-  public async forceRefreshTestExplorer(): Promise<void> {
-    try {
-      this.testController.items.replace([]);
-      this.discoveredTests.clear();
-
-      if (this.testController.resolveHandler) {
-        await this.testController.resolveHandler(undefined);
-      }
-
-      try {
-        await vscode.commands.executeCommand("testing.refreshTests");
-      } catch {
-        // ignore
-      }
-
-      try {
-        await vscode.commands.executeCommand("workbench.action.files.revert");
-      } catch {
-        // ignore
-      }
-
-      try {
-        const run = this.testController.createTestRun(
-          new vscode.TestRunRequest()
-        );
-        run.end();
-      } catch {
-        // ignore
-      }
-    } catch (error) {
-      this.context.logger.error("Failed to force refresh Test Explorer", {
-        error: errMsg(error),
-      });
-    }
+  public forceRefreshTestExplorer(): Promise<void> {
+    return this.refreshTests();
   }
 
   public getDiscoveredTests(): Map<string, vscode.TestItem> {
@@ -340,84 +291,36 @@ export class BehaveTestProvider {
     return this.context.discoveryManager;
   }
 
+  private automaticDiscoveryEnabled(): boolean {
+    return (vscode.workspace.workspaceFolders ?? []).some((folder) => ExtensionConfig.forResource(folder.uri).autoDiscoverTests);
+  }
+
+  private discoveryPatternKey(): string {
+    return JSON.stringify((vscode.workspace.workspaceFolders ?? []).map((folder) =>
+      [folder.uri.toString(), ExtensionConfig.forResource(folder.uri).testFilePattern]));
+  }
+
+  private updateDiscoverySettings(): void {
+    const changed = this.watchedPatterns !== this.discoveryPatternKey();
+    const automatic = this.automaticDiscoveryEnabled();
+    const enabled = !this.autoDiscover && automatic;
+    this.autoDiscover = automatic;
+    if (changed) {this.setupFileWatcher(); this.context.discoveryManager.clearCache();}
+    if (changed || enabled) {this.observeDiscovery(enabled ? this.discovery.refresh() : this.discovery.invalidate());}
+  }
+
   private setupFileWatcher(): void {
-    const pattern = this.context.config.testFilePattern;
-    const fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-    fileWatcher.onDidCreate((uri) => {
-      this.addFeatureFileToTestController(uri).catch((_err) => {
-        // console.error(`Error adding feature file on create:`, _err);
-      });
-    });
-
-    fileWatcher.onDidChange(async (_uri) => {
-      // refreshTests() re-discovers with forceRefresh, which already rebuilds
-      // the discovery cache — avoid a second full workspace sweep here.
-      await this.refreshTests();
-    });
-
-    fileWatcher.onDidDelete((uri) => {
-      const testItem = this.discoveredTests.get(uri.fsPath);
-      if (testItem) {
-        this.testController.items.delete(testItem.id);
-        this.discoveredTests.delete(uri.fsPath);
-      }
-    });
-  }
-
-  /**
-   * Surface a run's native output in the Test Results panel. Prefers the
-   * human-readable `display` (Behave's pretty output) over `output` (which is
-   * machine-readable JSON for Behave). The Test Results terminal requires CRLF
-   * line endings, so lone `\n` are normalised to `\r\n`.
-   */
-  private appendRunOutput(
-    run: vscode.TestRun,
-    result: { display?: string | undefined; output?: string | undefined } | undefined
-  ): void {
-    const text = result?.display ?? result?.output;
-    if (!text) {
-      return;
-    }
-    try {
-      run.appendOutput(text.replace(/\r?\n/g, "\r\n"));
-    } catch (error) {
-      this.context.logger.error("Error appending run output", { error: String(error) });
-    }
-  }
-
-  /**
-   * Attach each scenario's own output to its test item so that selecting the
-   * scenario in the Test Results view shows its steps/errors (rather than "test
-   * case did not report any output"). Outputs are keyed exactly like
-   * scenarioResults, so the same matcher resolves a leaf item to its text.
-   */
-  private attachScenarioOutputs(
-    run: vscode.TestRun,
-    root: vscode.TestItem,
-    scenarioOutputs: Record<string, string> | undefined,
-    workspaceRoot: string
-  ): void {
-    if (!scenarioOutputs || Object.keys(scenarioOutputs).length === 0) {
-      return;
-    }
-    for (const leaf of this.collectLeafTestItems(root)) {
-      const parent = leaf.parent;
-      const text = this.context.testItemMapping.getScenarioStatusForTestItem(
-        { id: leaf.id, ...(leaf.uri ? { uri: leaf.uri } : {}) },
-        parent
-          ? { id: parent.id, ...(parent.uri ? { uri: parent.uri } : {}) }
-          : { id: "" },
-        scenarioOutputs,
-        workspaceRoot
-      );
-      if (text) {
-        try {
-          run.appendOutput(text.replace(/\r?\n/g, "\r\n"), undefined, leaf);
-        } catch (error) {
-          this.context.logger.error("Error attaching scenario output", { itemId: leaf.id, error: String(error) });
-        }
-      }
+    this.watchedPatterns = this.discoveryPatternKey();
+    for (const watcher of this.fileWatchers.splice(0)) {watcher.dispose();}
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const config = ExtensionConfig.forResource(folder.uri);
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, config.testFilePattern));
+      this.fileWatchers.push(watcher);
+      const refresh = () => {
+        if (this.disposed || !this.fileWatchers.includes(watcher)) {return;}
+        this.observeDiscovery(this.discovery.invalidate());
+      };
+      watcher.onDidCreate(refresh); watcher.onDidChange(refresh); watcher.onDidDelete(refresh);
     }
   }
 
@@ -428,28 +331,6 @@ export class BehaveTestProvider {
    */
   private failureMessage(scenarioOutput: string | undefined, fallback: string): vscode.TestMessage {
     return new vscode.TestMessage(scenarioOutput?.trim() ? scenarioOutput : fallback);
-  }
-
-  /** Workspace root used to relativize feature paths for result keys. */
-  private workspaceRoot(): string {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  }
-
-  /** Forward-slashed workspace-relative path, matching behave result keys. */
-  private toResultPath(absolutePath: string): string {
-    return path.relative(this.workspaceRoot(), absolutePath).replace(/\\/g, "/");
-  }
-
-  /** Run a capture and surface its output in the Test Results panel. */
-  private async captureAndRender(
-    run: vscode.TestRun,
-    test: vscode.TestItem,
-    capture: () => Promise<ScenarioRunResult>
-  ): Promise<ScenarioRunResult> {
-    const result = await capture();
-    this.appendRunOutput(run, result);
-    this.attachScenarioOutputs(run, test, result.scenarioOutputs, this.workspaceRoot());
-    return result;
   }
 
   /**
@@ -473,6 +354,8 @@ export class BehaveTestProvider {
         if (cacheKey) { this.testStatusCache.set(cacheKey, "failed"); }
         this.updateTestStatus(item.id, "failed");
         run.failed(item, this.failureMessage(output, "Test failed"));
+      } else if (status === "errored") {
+        run.errored(item, this.failureMessage(output, "The selected test did not produce a valid outcome. Inspect the captured output."));
       } else {
         run.skipped(item);
       }
@@ -481,522 +364,142 @@ export class BehaveTestProvider {
     }
   }
 
-  /**
-   * Mark every leaf with the status keyed by `keyFor(leaf)` in the run's
-   * result maps and return the aggregate outcome for parent roll-up.
-   */
-  private applyKeyedResults(
-    run: vscode.TestRun,
-    leaves: Iterable<vscode.TestItem>,
-    testResult: ScenarioRunResult,
-    keyFor: (leaf: vscode.TestItem) => string
-  ): { anyFailed: boolean; allPassed: boolean } {
-    let anyFailed = false;
-    let allPassed = true;
-    for (const leaf of leaves) {
-      const key = keyFor(leaf);
-      const status = testResult.scenarioResults?.[key];
-      this.markResult(run, leaf, status, testResult.scenarioOutputs?.[key], key);
-      if (status === "failed") { anyFailed = true; }
-      if (status !== "passed") { allPassed = false; }
+  /** Plain-object reference for the result-lookup API. */
+  private itemRef(item: vscode.TestItem | undefined): { id: string; uri?: vscode.Uri } {
+    if (!item) {
+      return { id: "" };
     }
-    return { anyFailed, allPassed };
+    return { id: item.id, ...(item.uri ? { uri: item.uri } : {}) };
   }
 
-  /** Mark a parent item according to its children's aggregate outcome. */
-  private markParentFromOutcome(
-    run: vscode.TestRun,
-    parent: vscode.TestItem,
-    outcome: { anyFailed: boolean; allPassed: boolean },
-    failMessage: string
-  ): void {
-    try {
-      if (outcome.anyFailed) {
-        this.updateTestStatus(parent.id, "failed");
-        run.failed(parent, new vscode.TestMessage(failMessage));
-      } else if (outcome.allPassed) {
-        this.updateTestStatus(parent.id, "passed");
-        run.passed(parent);
-      } else {
-        run.skipped(parent);
-      }
-    } catch (error) {
-      this.context.logger.error("Error reporting parent result", { itemId: parent.id, error: String(error) });
-    }
-  }
-
-  /** Resolve a test item's value in a result map via the fuzzy matcher. */
-  private matchScenarioValue(
-    child: vscode.TestItem,
-    parent: vscode.TestItem | undefined,
+  /** Build a per-run result index for a status/output map. */
+  private resultLookup(
     map: Record<string, string> | undefined,
     workspaceRoot: string
-  ): string | undefined {
-    return this.context.testItemMapping.getScenarioStatusForTestItem(
-      { id: child.id, ...(child.uri ? { uri: child.uri } : {}) },
-      parent ? { id: parent.id, ...(parent.uri ? { uri: parent.uri } : {}) } : { id: "" },
-      map ?? {},
-      workspaceRoot
-    );
+  ): ScenarioResultLookup {
+    return this.context.testItemMapping.createLookup(map ?? {}, workspaceRoot);
   }
 
-  /** Mark a group node from the overall result map (all passed or not). */
-  private markGroupFromResults(
-    run: vscode.TestRun,
-    group: vscode.TestItem,
-    results: Record<string, string> | undefined,
-    failMessage: string
-  ): void {
-    const allPassed = Object.values(results ?? {}).every((s) => s === "passed");
-    if (allPassed) {
-      this.updateTestStatus(group.id, "passed");
-      run.passed(group);
-    } else {
-      this.updateTestStatus(group.id, "failed");
-      run.failed(group, new vscode.TestMessage(failMessage));
-    }
+  private async executionPlan(request: vscode.TestRunRequest) {
+    const roots = Array.from(this.testController.items, ([, item]) => item);
+    const scenarios = this.treeBuilder.scenarioSnapshot();
+    const scenarioFor = (id: string) => scenarios.get(id);
+    const units = testExplorerRunPlan(request, roots, scenarioFor);
+    const projects = await this.context.testExecutor.resolveProjects(units.map((unit) => unit.options.filePath));
+    return units.map((unit) => ({ ...unit, project: projectForFile(projects, unit.options.filePath) }));
   }
 
-  private async runTests(request: vscode.TestRunRequest): Promise<void> {
+  private async runTests(request: vscode.TestRunRequest, token?: vscode.CancellationToken): Promise<void> {
     if (this.isTestRunning) {
       vscode.window.showWarningMessage("A test run is already in progress. Please wait for it to finish before starting another.");
       return;
     }
     this.isTestRunning = true;
+    const cancellation = this.runCancellation = new vscode.CancellationTokenSource();
+    const linked = token?.onCancellationRequested(() => cancellation.cancel());
+    if (token?.isCancellationRequested) {cancellation.cancel();}
     const run = this.testController.createTestRun(request);
-
     try {
-      for (const test of request.include ?? []) {
-        run.started(test);
-        this.updateTestStatus(test.id, "started");
-
-        if (test.uri) {
-          const lineNumber = this.extractLineNumberFromTestId(test.id);
-          const isFeatureFile = this.isFeatureFileTest(test.id);
-          const isGroupTest = this.isGroupTest(test.id);
-          const scenarioName = isFeatureFile ? undefined : test.label;
-
+      await this.context.testExecutor.withExecutionSession(async (session) => {
+        const plan = await this.executionPlan(request);
+        const outcomes = new Map<vscode.TestItem, string>();
+        for (const unit of plan) {
+          const project = unit.project;
+          if (session.signal.aborted) {
+            for (const logical of unit.scenarios) {for (const alias of logical.aliases) {run.skipped(alias); outcomes.set(alias, "skipped");}}
+            continue;
+          }
+          for (const logical of unit.scenarios) {
+            for (const alias of logical.aliases) {run.started(alias); this.updateTestStatus(alias.id, "started");}
+          }
           try {
-            if (isFeatureFile) {
-              await this.runFeatureFileTest(run, test);
-            } else if (test.id.includes(":outline:")) {
-              await this.runOutlineTest(run, test);
-            } else if (isGroupTest) {
-              await this.runFileGroupTest(run, test);
-            } else {
-              await this.runSingleScenarioTest(run, test, lineNumber, scenarioName);
+            const result = unit.kind === "file"
+              ? await this.context.testExecutor.runFeatureFileWithOutput(unit.options, session, project)
+              : await this.context.testExecutor.runScenarioWithOutput(unit.options, session, project);
+            if (!result.outputStreamed) {session.publish(result.display ?? result.output);}
+            const statuses = this.resultLookup(result.scenarioResults, project.cwd);
+            const outputs = this.resultLookup(result.scenarioOutputs, project.cwd);
+            for (const logical of unit.scenarios) {
+              for (const alias of logical.aliases) {
+                const status = result.cancelled ? "skipped" : result.errored ? "errored" : statuses.get(this.itemRef(alias), this.itemRef(alias.parent)) ?? "errored";
+                const output = outputs.get(this.itemRef(alias), this.itemRef(alias.parent));
+                if (output && !result.outputStreamed) {session.publish(output);}
+                const detail = status === "failed" || status === "errored" ? session.limitDisplay(output ?? result.error ?? result.display ?? "") : undefined;
+                this.markResult(run, alias, status, detail);
+                outcomes.set(alias, status);
+              }
             }
           } catch (error) {
-            const errorMessage = errMsg(error);
-            this.context.logger.error(
-              `Test execution failed for ${test.label}: ${errorMessage}`,
-              {
-                testId: test.id,
-                filePath: test.uri.fsPath,
-                lineNumber,
+            for (const logical of unit.scenarios) {
+              for (const alias of logical.aliases) {
+                this.markResult(run, alias, session.signal.aborted ? "skipped" : "errored", session.limitDisplay(errMsg(error)));
+                outcomes.set(alias, session.signal.aborted ? "skipped" : "errored");
               }
-            );
-            run.failed(
-              test,
-              new vscode.TestMessage(`Test execution failed: ${errorMessage}`)
-            );
-            this.updateTestStatus(test.id, "failed");
+            }
           }
-        } else if (this.isGroupTest(test.id) && test.id.startsWith('tag:')) {
-          await this.runTagGroupTest(run, test);
-          return;
-        } else if (this.isGroupTest(test.id)) {
-          // For flat, file, and scenario type organizations, aggregate results
-          // across all relevant feature files before marking children.
-          await this.runAggregatedGroupTest(run, test);
-          return;
         }
-      }
+        const rollup = (item: vscode.TestItem): string[] => {
+          if (item.children.size === 0) {
+            const status = outcomes.get(item);
+            return status ? [status] : [];
+          }
+          const statuses = Array.from(item.children, ([, child]) => rollup(child)).flat();
+          if (statuses.length > 0) {
+            this.markResult(run, item, statuses.includes("errored") ? "errored" : statuses.includes("failed") ? "failed" : statuses.every((status) => status === "passed") ? "passed" : "skipped");
+          }
+          return statuses;
+        };
+        this.testController.items.forEach(rollup);
+      }, cancellation.token, (text) => run.appendOutput(text), (text) => text.replace(/\r?\n/g, "\r\n"));
     } catch (error) {
-      const errorMessage = errMsg(error);
-      this.context.logger.error(`Error running tests: ${errorMessage}`);
-      for (const test of request.include ?? []) {
-        run.failed(
-          test,
-          new vscode.TestMessage(`Test execution failed: ${errorMessage}`)
-        );
-      }
+      this.context.logger.error("Test selection failed", { error: errMsg(error) });
+      vscode.window.showErrorMessage(errMsg(error));
     } finally {
       run.end();
+      linked?.dispose(); cancellation.dispose(); this.runCancellation = undefined;
       this.isTestRunning = false;
     }
   }
 
-  /** Run a whole feature file and mark its children from per-scenario results. */
-  private async runFeatureFileTest(run: vscode.TestRun, test: vscode.TestItem): Promise<void> {
-    const featureFilePath = (test.uri as vscode.Uri).fsPath;
-    const testResult = await this.captureAndRender(run, test, () =>
-      this.context.testExecutor.runFeatureFileWithOutput({ filePath: featureFilePath })
-    );
-
-    if (testResult.scenarioResults && test.children.size > 0) {
-      const featureLine = test.range ? String(test.range.start.line + 1) : "1";
-      for (const [, child] of Array.from(test.children)) {
-        if (child.children.size === 0) {
-          // Leaf scenario: the child id already carries the 3-segment result
-          // key when discovery produced one; otherwise rebuild it.
-          this.applyKeyedResults(run, [child], testResult, (leaf) => {
-            if (/^(.*):(\d+):(\d+)$/.exec(leaf.id)) {
-              return leaf.id;
-            }
-            return `${this.toResultPath(featureFilePath)}:${featureLine}:${this.extractLineNumberFromTestId(leaf.id)}`;
-          });
-        } else {
-          // Scenario outline: mark started, then roll up from its examples
-          // (which may be nested under per-Examples-block groups).
-          run.started(child);
-          this.updateTestStatus(child.id, "started");
-          const outcome = this.applyKeyedResults(run, this.collectLeafTestItems(child), testResult, (leaf) =>
-            `${this.toResultPath(featureFilePath)}:${featureLine}:${this.extractLineNumberFromTestId(leaf.id)}`
-          );
-          this.markParentFromOutcome(run, child, outcome, "One or more examples failed");
-        }
-      }
-    } else {
-      this.context.logger.warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
-      this.markAllChildrenBasedOnResult(test, run, testResult);
-    }
-
-    // Explicitly update all scenario outline parents after processing all scenarios
-    for (const [, child] of Array.from(test.children)) {
-      if (child.children.size > 0) {
-        this.updateScenarioOutlineParentStatus(child.id);
-      }
-    }
-  }
-
-  /** Run a scenario-outline node: all examples in one run filtered by outline name. */
-  private async runOutlineTest(run: vscode.TestRun, test: vscode.TestItem): Promise<void> {
-    const filePath = (test.uri as vscode.Uri).fsPath;
-    const outlineName = /:outline:(.+)$/.exec(test.id)?.[1] ?? test.label.replace(/^Scenario Outline: /, "");
-    const testResult = await this.captureAndRender(run, test, () =>
-      this.context.testExecutor.runScenarioWithOutput({ filePath, scenarioName: outlineName })
-    );
-
-    if (testResult.scenarioResults && test.children.size > 0) {
-      // Mark intermediate groupings (Examples blocks) as started so VS Code shows progress
-      test.children.forEach((directChild) => {
-        if (directChild.children.size > 0) {
-          run.started(directChild);
-          this.updateTestStatus(directChild.id, "started");
-        }
-      });
-
-      const featureLine = test.parent?.range ? String(test.parent.range.start.line + 1) : undefined;
-      this.applyKeyedResults(run, this.collectLeafTestItems(test), testResult, (leaf) => {
-        const childLine = this.extractLineNumberFromTestId(leaf.id);
-        const rel = this.toResultPath(filePath);
-        return featureLine ? `${rel}:${featureLine}:${childLine}` : `${rel}:${childLine}`;
-      });
-    } else {
-      this.context.logger.warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
-      this.markAllChildrenBasedOnResult(test, run, testResult);
-    }
-  }
-
-  /** Run a file-backed group: all scenarios in the file, keyed by absolute path. */
-  private async runFileGroupTest(run: vscode.TestRun, test: vscode.TestItem): Promise<void> {
-    const groupFilePath = (test.uri as vscode.Uri).fsPath;
-    const testResult = await this.captureAndRender(run, test, () =>
-      this.context.testExecutor.runFeatureFileWithOutput({ filePath: groupFilePath })
-    );
-
-    if (testResult.scenarioResults && test.children.size > 0) {
-      this.applyKeyedResults(
-        run,
-        Array.from(test.children, ([, child]) => child),
-        testResult,
-        (leaf) => `${groupFilePath}:${this.extractLineNumberFromTestId(leaf.id)}`
-      );
-    } else {
-      this.context.logger.warn("No scenarioResults mapping found, falling back to overall result for all children", { testId: test.id });
-      this.markAllChildrenBasedOnResult(test, run, testResult);
-    }
-  }
-
-  /** Run a single scenario (an outline example runs its whole outline). */
-  private async runSingleScenarioTest(
-    run: vscode.TestRun,
-    test: vscode.TestItem,
-    lineNumber: number | undefined,
-    scenarioName: string | undefined
-  ): Promise<void> {
-    const isExample = isScenarioOutlineExampleName(scenarioName);
-    const scenarioOptions: import("../types").TestExecutionOptions = {
-      filePath: (test.uri as vscode.Uri).fsPath,
-      ...(lineNumber ? { lineNumber } : {}),
-      ...(scenarioName ? { scenarioName } : {}),
-    };
-
-    const testResult = await this.captureAndRender(run, test, () =>
-      this.context.testExecutor.runScenarioWithOutput(
-        isExample
-          ? { ...scenarioOptions, scenarioName: extractOutlineName(scenarioName ?? "") }
-          : scenarioOptions
-      )
-    );
-
-    // For scenario outline examples, store all example results in the cache
-    if (isExample && testResult.scenarioResults) {
-      for (const [childKey, status] of Object.entries(testResult.scenarioResults)) {
-        this.testStatusCache.set(childKey, status as "passed" | "failed");
-        const lineMatch = /:(\d+)$/.exec(childKey);
-        if (lineMatch) {
-          this.updateTestStatus(`:${lineMatch[1]}`, status as "passed" | "failed");
-        }
-      }
-    }
-
-    const workspaceRoot = this.workspaceRoot();
-    const foundStatus = this.matchScenarioValue(test, test.parent, testResult.scenarioResults, workspaceRoot);
-    const foundOutput = this.matchScenarioValue(test, test.parent, testResult.scenarioOutputs, workspaceRoot);
-
-    if (foundStatus === "passed" || foundStatus === "failed") {
-      this.markResult(run, test, foundStatus, foundOutput);
-    } else if (foundStatus) {
-      run.skipped(test);
-    } else {
-      // No per-scenario result resolved: fall back to the overall outcome.
-      this.markResult(run, test, testResult.success ? "passed" : "failed", foundOutput ?? testResult.display);
-    }
-  }
-
-  /** Run a tag group: one run with the tag expression, then match children. */
-  private async runTagGroupTest(run: vscode.TestRun, test: vscode.TestItem): Promise<void> {
-    const tag = /^tag:(.+)$/.exec(test.id)?.[1] ?? test.label ?? "";
-    const testResult = await this.captureAndRender(run, test, () =>
-      this.context.testExecutor.runAllTestsWithTagsOutput(tag)
-    );
-
-    const workspaceRoot = this.workspaceRoot();
-    for (const [, child] of Array.from(test.children)) {
-      const status = this.matchScenarioValue(child, test, testResult.scenarioResults, workspaceRoot);
-      const output = status === "failed"
-        ? this.matchScenarioValue(child, test, testResult.scenarioOutputs, workspaceRoot)
-        : undefined;
-      this.markResult(run, child, status, output);
-    }
-    this.markGroupFromResults(run, test, testResult.scenarioResults, "One or more scenarios failed");
-  }
-
-  /** Run a non-file group by aggregating one run per backing feature file. */
-  private async runAggregatedGroupTest(run: vscode.TestRun, test: vscode.TestItem): Promise<void> {
-    const featureFiles = new Set<string>();
-    const collectFeatureFiles = (testItem: vscode.TestItem) => {
-      if (testItem.uri) {
-        featureFiles.add(testItem.uri.fsPath);
-      }
-      testItem.children.forEach(collectFeatureFiles);
-    };
-    collectFeatureFiles(test);
-
-    const aggregatedScenarioResults: Record<string, string> = {};
-    const aggregatedScenarioOutputs: Record<string, string> = {};
-    for (const filePath of featureFiles) {
-      const result = await this.context.testExecutor.runFeatureFileWithOutput({ filePath });
-      this.appendRunOutput(run, result);
-      Object.assign(aggregatedScenarioResults, result.scenarioResults);
-      Object.assign(aggregatedScenarioOutputs, result.scenarioOutputs);
-    }
-
-    const workspaceRoot = this.workspaceRoot();
-    this.attachScenarioOutputs(run, test, aggregatedScenarioOutputs, workspaceRoot);
-    for (const [, child] of Array.from(test.children)) {
-      if (this.isScenarioOutlineParent(child)) {
-        let anyFailed = false;
-        let allPassed = true;
-        for (const [, grandChild] of Array.from(child.children)) {
-          const grandChildStatus = this.matchScenarioValue(grandChild, child, aggregatedScenarioResults, workspaceRoot);
-          if (grandChildStatus === "failed") {
-            anyFailed = true;
-            allPassed = false;
-          } else if (grandChildStatus !== "passed") {
-            allPassed = false;
-          }
-        }
-        this.markParentFromOutcome(run, child, { anyFailed, allPassed }, "One or more examples failed");
-        continue;
-      }
-
-      const status = this.matchScenarioValue(child, test, aggregatedScenarioResults, workspaceRoot);
-      const output = status === "failed"
-        ? this.matchScenarioValue(child, test, aggregatedScenarioOutputs, workspaceRoot)
-        : undefined;
-      this.markResult(run, child, status, output);
-    }
-    this.markGroupFromResults(run, test, aggregatedScenarioResults, "One or more scenarios failed");
-  }
-
-  private async debugTests(request: vscode.TestRunRequest): Promise<void> {
+  private async debugTests(request: vscode.TestRunRequest, token?: vscode.CancellationToken): Promise<void> {
     if (this.isTestRunning) {
       vscode.window.showWarningMessage("A test run is already in progress. Please wait for it to finish before starting another.");
       return;
     }
     this.isTestRunning = true;
+    const cancellation = this.runCancellation = new vscode.CancellationTokenSource();
+    const linked = token?.onCancellationRequested(() => cancellation.cancel());
+    if (token?.isCancellationRequested) {cancellation.cancel();}
+    const run = this.testController.createTestRun(request);
     try {
-      for (const test of request.include ?? []) {
-        try {
-          if (test.uri) {
-            const lineNumber = this.extractLineNumberFromTestId(test.id);
-            const isFeatureFile = this.isFeatureFileTest(test.id);
-            const isGroupTest = this.isGroupTest(test.id);
-            const scenarioName = isFeatureFile ? undefined : test.label;
-
-            if (isFeatureFile || isGroupTest) {
-              await this.context.testExecutor.debugScenario({
-                filePath: test.uri.fsPath,
-                debug: true,
-              });
-            } else {
-              const debugOptions: import("../types").TestExecutionOptions = {
-                filePath: test.uri.fsPath,
-                ...(lineNumber ? { lineNumber } : {}),
-                debug: true,
-                ...(scenarioName ? { scenarioName } : {}),
-              };
-              await this.context.testExecutor.debugScenario(debugOptions);
-            }
-          } else if (this.isGroupTest(test.id)) {
-            // Handle tag groups (no URI) - debug all scenarios in the group
-            const featureFiles = new Set<string>();
-            const collectFeatureFiles = (testItem: vscode.TestItem) => {
-              if (testItem.uri) {
-                featureFiles.add(testItem.uri.fsPath);
-              }
-              testItem.children.forEach(collectFeatureFiles);
-            };
-            collectFeatureFiles(test);
-
-            for (const filePath of featureFiles) {
-              await this.context.testExecutor.debugScenario({
-                filePath,
-                debug: true,
-              });
+      await this.context.testExecutor.withExecutionSession(async (session) => {
+        const plan = await this.executionPlan(request);
+        let failed = false;
+        for (const unit of plan) {
+          const project = unit.project;
+          let failure: unknown;
+          if (!failed && !session.signal.aborted) {
+            try {await this.context.testExecutor.debugScenario({ ...unit.options, debug: true }, session, project);}
+            catch (error) {
+              if (!(error instanceof Error && error.name === "AbortError" && session.signal.aborted)) {failure = error; failed = true;}
             }
           }
-        } catch (testError) {
-          const errorMessage = errMsg(testError);
-          this.context.logger.error(
-            `Failed to debug test ${test.label}: ${errorMessage}`,
-            {
-              testId: test.id,
-              filePath: test.uri?.fsPath,
+          for (const logical of unit.scenarios) {
+            for (const alias of logical.aliases) {
+              if (failure) {this.markResult(run, alias, "errored", session.limitDisplay(errMsg(failure)));}
+              else {run.skipped(alias);}
             }
-          );
-
-          vscode.window.showErrorMessage(
-            `Failed to debug test "${test.label}": ${errorMessage}`
-          );
+          }
         }
-      }
+      }, cancellation.token);
     } catch (error) {
-      const errorMessage = errMsg(error);
-      this.context.logger.error(
-        `Failed to start debug session: ${errorMessage}`
-      );
-
-      vscode.window.showErrorMessage(
-        `Failed to start debug session: ${errorMessage}`
-      );
+      this.context.logger.error("Debug selection failed", { error: errMsg(error) });
+      vscode.window.showErrorMessage(errMsg(error));
     } finally {
+      run.end();
+      linked?.dispose(); cancellation.dispose(); this.runCancellation = undefined;
       this.isTestRunning = false;
     }
-  }
-
-  private markAllChildrenBasedOnResult(
-    parentTest: vscode.TestItem,
-    run: vscode.TestRun,
-    result: import("../types").TestRunResult
-  ): void {
-    const markChildrenRecursively = (test: vscode.TestItem) => {
-      test.children.forEach((child) => {
-        run.started(child);
-
-        if (result.success) {
-          run.passed(child);
-          this.updateTestStatus(child.id, "passed");
-        } else {
-          run.failed(
-            child,
-            new vscode.TestMessage(
-              `Test failed: ${result.error ?? "Unknown error"}`
-            )
-          );
-          this.updateTestStatus(child.id, "failed");
-        }
-
-        markChildrenRecursively(child);
-      });
-    };
-
-    markChildrenRecursively(parentTest);
-  }
-
-  private extractLineNumberFromTestId(testId: string): number | undefined {
-    // Test ID formats: file.feature, file.feature:8, file.feature:outline:name, file.feature:group:name
-    const lineMatch = testId.match(/:(\d+)$/);
-    if (lineMatch) {
-      const lineNumber = parseInt(lineMatch[1] ?? "0", 10);
-      return lineNumber > 0 ? lineNumber : undefined;
-    }
-
-    if (!testId.includes(":")) {
-      return undefined;
-    }
-
-    if (
-      testId.includes(":outline:") ||
-      testId.includes(":group:") ||
-      testId.includes("scenario_")
-    ) {
-      return undefined;
-    }
-
-    // Fallback: any number embedded in the ID
-    const numberMatch = testId.match(/:(\d+)/);
-    if (numberMatch) {
-      const lineNumber = parseInt(numberMatch[1] ?? "0", 10);
-      return lineNumber > 0 ? lineNumber : undefined;
-    }
-
-    return undefined;
-  }
-
-  private isFeatureFileTest(testId: string): boolean {
-    if (!testId.includes(":")) {
-      return true;
-    }
-
-    if (
-      testId.includes(":group:") ||
-      testId.includes(":outline:") ||
-      testId.includes("scenario_")
-    ) {
-      return false;
-    }
-
-    if (testId.match(/:(\d+)$/)) {
-      return false;
-    }
-
-    return true;
-  }
-
-  private isGroupTest(testId: string): boolean {
-    return (
-      testId.startsWith("group:") ||
-      testId.startsWith("tag:") ||
-      testId.includes(":group:") ||
-      testId.includes(":all") ||
-      testId.includes(":tag:") ||
-      testId.includes(":regular") ||
-      testId.includes(":outlines")
-    );
   }
 
   private updateScenarioOutlineParentStatus(parentId: string): void {
@@ -1082,24 +585,31 @@ export class BehaveTestProvider {
     return undefined;
   }
 
-  public dispose(): void {
-    try {
-      this.discoveredTests.clear();
-      this.testController.dispose();
-    } catch (error) {
-      this.context.logger.error("Failed to dispose test provider", { error });
+  public dispose(): Promise<void> {
+    if (this.disposed) {return this.disposal ?? Promise.resolve();}
+    this.disposed = true;
+    this.runCancellation?.cancel();
+    const discoveryDrain = this.disposal = this.discovery.dispose();
+    for (const watcher of this.fileWatchers.splice(0)) {watcher.dispose();}
+    for (const disposable of this.disposables.reverse()) {disposable.dispose();}
+    delete this.testController.resolveHandler;
+    this.testController.refreshHandler = undefined;
+    this.discoveredTests.clear();
+    this.scenarioOutlineParents.clear();
+    this.testStatusCache.clear();
+    this.testStatusByLocation.clear();
+    if (this.ownsContext) {
+      const executionDrain = this.context.testExecutor.dispose()
+        .catch((error: unknown) => this.context.logger.error("Execution cleanup failed", { error: errMsg(error) }));
+      this.disposal = Promise.all([discoveryDrain, executionDrain])
+        .then(() => {
+          this.context.discoveryManager.dispose();
+          this.context.logger.dispose();
+        })
+        .catch((error: unknown) => {process.stderr.write(`Provider cleanup failed: ${errMsg(error)}\n`);});
+      this.context.config.dispose();
     }
-  }
-
-  private isScenarioOutlineParent(testItem: vscode.TestItem): boolean {
-    // Has children, label starts with "Scenario Outline:", children are outline examples.
-    return (
-      testItem.children.size > 0 &&
-      testItem.label.startsWith("Scenario Outline:") &&
-      Array.from(testItem.children).every(([, child]) =>
-        isScenarioOutlineExampleName(child.label)
-      )
-    );
+    return this.disposal;
   }
 
   private extractFeatureFileFromTestId(testId: string): string | undefined {

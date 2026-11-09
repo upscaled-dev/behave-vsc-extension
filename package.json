@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/upscaled-dev/behave-vsc-extension#readme",
   "bugs": {
-    "url": "hhttps://github.com/upscaled-dev/behave-vsc-extension/issues"
+    "url": "https://github.com/upscaled-dev/behave-vsc-extension/issues"
   },
   "engines": {
     "vscode": "^1.99.0"
@@ -53,22 +53,26 @@
         "behaveTestRunner.behaveCommand": {
           "type": "string",
           "default": "behave",
-          "description": "Command to run Behave tests (e.g., 'behave', 'python -m behave', 'python3 -m behave', 'py -m behave')"
+          "description": "Command to run Behave tests (e.g., 'behave', 'python -m behave', 'python3 -m behave', 'py -m behave')",
+          "scope": "resource"
         },
         "behaveTestRunner.workingDirectory": {
           "type": "string",
           "default": "",
-          "description": "Working directory for running tests (empty = workspace root)"
+          "description": "Working directory for running tests (empty = workspace root)",
+          "scope": "resource"
         },
         "behaveTestRunner.autoDiscoverTests": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically discover and load test files on startup"
+          "description": "Automatically discover and load test files on startup",
+          "scope": "resource"
         },
         "behaveTestRunner.testFilePattern": {
           "type": "string",
           "default": "**/*.feature",
-          "description": "Glob pattern for test file discovery"
+          "description": "Glob pattern for test file discovery",
+          "scope": "resource"
         },
         "behaveTestRunner.enableCodeLens": {
           "type": "boolean",
@@ -78,14 +82,16 @@
         "behaveTestRunner.parallelExecution": {
           "type": "boolean",
           "default": false,
-          "description": "Enable parallel execution of feature files"
+          "description": "Enable parallel execution of feature files",
+          "scope": "resource"
         },
         "behaveTestRunner.maxParallelProcesses": {
           "type": "number",
           "default": 4,
           "minimum": 1,
           "maximum": 16,
-          "description": "Maximum number of parallel processes for test execution"
+          "description": "Maximum number of parallel processes for test execution",
+          "scope": "resource"
         },
         "behaveTestRunner.outputFormat": {
           "type": "string",
@@ -98,17 +104,20 @@
             "steps"
           ],
           "default": "pretty",
-          "description": "Output format for behave test results"
+          "description": "Behave formatter. JUnit enables native XML reports plus pretty output; steps still executes tests.",
+          "scope": "resource"
         },
         "behaveTestRunner.tags": {
           "type": "string",
           "default": "",
-          "description": "Default tags to filter tests (e.g., '@smoke,@regression')"
+          "description": "Default tags to filter tests (e.g., '@smoke,@regression')",
+          "scope": "resource"
         },
         "behaveTestRunner.dryRun": {
           "type": "boolean",
           "default": false,
-          "description": "Enable dry run mode to see what tests would be executed without running them"
+          "description": "Enable dry run mode to see what tests would be executed without running them",
+          "scope": "resource"
         },
         "behaveTestRunner.framework": {
           "type": "string",
@@ -117,25 +126,30 @@
             "pytest-bdd"
           ],
           "default": "behave",
-          "description": "BDD framework to use for test execution (behave or pytest-bdd)"
+          "description": "BDD framework to use for test execution (behave or pytest-bdd)",
+          "scope": "resource"
         },
         "behaveTestRunner.autoDetectFramework": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically detect the BDD framework based on project configuration files"
+          "description": "Automatically detect the BDD framework based on project configuration files",
+          "scope": "resource"
         },
         "behaveTestRunner.pytestCommand": {
           "type": "string",
           "default": "",
-          "description": "Command to run pytest for pytest-bdd framework (e.g., 'pytest', 'python -m pytest'). Leave empty for auto-detection."
+          "description": "Command to run pytest for pytest-bdd framework (e.g., 'pytest', 'python -m pytest'). Leave empty for auto-detection.",
+          "scope": "resource"
         },
         "behaveTestRunner.pytestBddFilePattern": {
           "type": "string",
           "default": "**/*_test.py",
-          "description": "Glob pattern for pytest-bdd test file discovery"
+          "description": "Deprecated, unused pytest-bdd collection setting",
+          "deprecationMessage": "This setting is unused. Configure python_files and testpaths in pytest.ini instead, or use --override-ini=python_files=... in behaveTestRunner.pytestCommand."
         },
         "behaveTestRunner.stepDefinitionPaths": {
           "type": "array",
+          "scope": "resource",
           "items": {
             "type": "string"
           },
@@ -362,12 +376,11 @@
     ]
   },
   "scripts": {
-    "bump:patch": "node -e \"const pkg=require('./package.json'); pkg.version=pkg.version.replace(/\\.(\\d+)$/, (_,n) => '.' + (parseInt(n)+1)); require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n'); console.log('Bumped version to ' + pkg.version);\"",
     "compile": "npm run check-types && npm run lint && node scripts/build/esbuild.cjs",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node scripts/build/esbuild.cjs --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run bump:patch && npm run check-types && npm run lint && node scripts/build/esbuild.cjs --production",
+    "package": "npm run check-types && npm run lint && node scripts/build/esbuild.cjs --production",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -390,18 +403,19 @@
     "clean": "rimraf dist out",
     "build": "npm run clean && npm run compile",
     "dev": "npm run watch",
-    "version": "commit-and-tag-version",
     "release": "commit-and-tag-version",
     "release:patch": "commit-and-tag-version --release-as patch",
     "release:minor": "commit-and-tag-version --release-as minor",
     "release:major": "commit-and-tag-version --release-as major",
-    "package:vsix": "npm run package && vsce package --no-yarn --out dist/behave-test-runner-$(node -p \"require('./package.json').version\").vsix",
+    "package:vsix": "npm run package && node scripts/release.cjs package",
     "release:vsix": "npm run release && npm run package:vsix",
     "docs": "typedoc --out docs src",
     "docs:watch": "typedoc --out docs --watch src",
     "docs:serve": "typedoc --out docs --serve src",
     "prepare": "husky",
-    "coverage": "node scripts/test/coverage.js"
+    "coverage": "node scripts/test/coverage.js",
+    "verify:vsix": "node scripts/release.cjs verify",
+    "test:release": "node --test scripts/test/release.test.cjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.1",
@@ -414,8 +428,10 @@
     "@typescript-eslint/parser": "^8.59.3",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "3.9.1",
     "c8": "^11.0.0",
     "chai": "^5.3.3",
+    "commit-and-tag-version": "^12.7.3",
     "commitizen": "^4.3.0",
     "cz-conventional-changelog": "^3.3.0",
     "esbuild": "^0.28.0",
@@ -423,10 +439,11 @@
     "husky": "^9.1.7",
     "npm-run-all": "^4.1.5",
     "rimraf": "^6.1.3",
-    "commit-and-tag-version": "^12.7.3",
     "typedoc": "^0.28.19",
     "typedoc-plugin-markdown": "^4.11.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "xml2js": "0.5.0",
+    "yauzl": "3.2.1"
   },
   "config": {
     "commitizen": {
@@ -435,5 +452,16 @@
   },
   "attribution": {
     "icon": "Designed by Freepik from https://www.freepik.com/"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Discovery and navigation are available. Test execution and Python probes require workspace trust.",
+      "restrictedConfigurations": [
+        "behaveTestRunner.behaveCommand",
+        "behaveTestRunner.pytestCommand",
+        "behaveTestRunner.workingDirectory"
+      ]
+    }
   }
 }

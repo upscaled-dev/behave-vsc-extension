@@ -35,6 +35,11 @@ suite("Scenario Outline Fix Tests", () => {
     "    Examples:", // 19
     "      | input | expected |", // 20
     "      | hello | world    |", // 21
+    "  Scenario Template: Template with different values", // 22
+    '    Given I have a "<input>" value', // 23
+    "    Scenarios:", // 24
+    "      | input |", // 25
+    "      | hello |", // 26
   ].join("\n");
 
   setup(() => {
@@ -65,6 +70,16 @@ suite("Scenario Outline Fix Tests", () => {
       true,
       "Should detect scenario outline correctly"
     );
+  });
+
+  test("English keyword Scenario Template is an outline", () => {
+    const isOutline = (commandManager as any).isScenarioOutline(
+      testFeaturePath,
+      22,
+      "Template with different values"
+    );
+
+    assert.strictEqual(isOutline, true);
   });
 
   test("Should not detect regular scenario as outline", () => {

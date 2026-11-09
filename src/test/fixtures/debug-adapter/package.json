@@ -1,0 +1,16 @@
+{
+  "name": "behave-test-debug-adapter",
+  "publisher": "local-test",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.99.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onDebugResolve:debugpy"],
+  "contributes": {
+    "languages": [{ "id": "python", "extensions": [".py"] }],
+    "breakpoints": [{ "language": "python" }],
+    "debuggers": [{
+      "type": "debugpy", "label": "Acceptance Python debugger", "languages": ["python"],
+      "configurationAttributes": { "launch": { "required": ["python"], "properties": { "python": { "type": "string" } } } }
+    }]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "feature-tags": "@feature\nFeature: Feature tags\n  Scenario: First\n    Given a value\n  @local\n  Scenario: Second\n    Given a value\n",
+  "rule-tags": "@feature\nFeature: Rule tags\n  Background:\n    Given feature setup\n  @rule\n  Rule: First rule\n    Background:\n      Given rule setup\n    Scenario: First\n      Given a value\n    Scenario: Second\n      Given a value\n  Rule: Second rule\n    Scenario: Third\n      Given a value\n",
+  "examples-tags": "@feature\nFeature: Examples tags\n  @outline\n  Scenario Outline: Tagged <value>\n    Given <value>\n    @first\n    Examples: One\n      | value |\n      | a |\n    @second\n    Examples: Two\n      | value |\n      | b |\n",
+  "docstring-keywords": "Feature: Docstring keywords\n  Scenario: Real scenario\n    Given a payload\n      \"\"\"\n      Scenario: Phantom scenario\n      @phantom\n      Given phantom step\n      \"\"\"\n    Then a value\n  Scenario: Following scenario\n    Given a value\n",
+  "docstring-backticks": "Feature: Backtick docstring\n  Scenario: Real scenario\n    Given a payload\n      ```\n      Scenario: Phantom scenario\n      ```\n    Then a value\n",
+  "background-arguments": "Feature: Background arguments\n  Background:\n    Given a payload\n      \"\"\"\n      payload\n      \"\"\"\n    And another setup\n  Scenario: Real scenario\n    Then a value\n",
+  "duplicate-outlines": "Feature: Duplicate outlines\n  Scenario Outline: Repeated\n    Given <value>\n    Examples: Same\n      | value |\n      | a |\n      | b |\n  Scenario Outline: Repeated\n    Given <value>\n    Examples: Same\n      | value |\n      | c |\n      | d |\n",
+  "duplicate-examples": "Feature: Duplicate Examples\n  Scenario Outline: Repeated blocks\n    Given <value>\n    Examples: Same\n      | value |\n      | a |\n    Examples: Same\n      | value |\n      | b |\n",
+  "aliases": "Feature: English aliases\n  Example: Alias scenario\n    Given a value\n  Scenario Template: Alias outline\n    Given <value>\n    Scenarios:\n      | value |\n      | a |\n",
+  "wildcard": "Feature: Wildcard steps\n  Scenario: Wildcard scenario\n    Given a value\n    * another value\n",
+  "french": "# language: fr\nFonctionnalité: Français\n  Scénario: Scénario réel\n    Soit une valeur\n"
+}

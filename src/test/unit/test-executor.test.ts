@@ -1,626 +1,352 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { TestExecutor } from "../../core/test-executor.js";
-import { TestExecutionOptions } from "../../types/index.js";
-import { PythonDetector } from '../../utils/python-detector';
-import { expect } from 'chai';
-import { CommandManager } from '../../commands/command-manager';
+import { ProjectContext } from "../../core/project-context";
+import { BehaveCommandBuilder } from "../../core/command-builders/behave-command-builder";
+import { TestExecutor } from "../../core/test-executor";
+import { ExtensionConfig } from "../../core/extension-config";
+import { PythonDetector } from "../../utils/python-detector";
+import { CommandManager } from "../../commands/command-manager";
+import { BehaveJsonParser } from "../../utils/behave-json-parser";
+import { CucumberJsonParser } from "../../utils/cucumber-json-parser";
+import { Logger, LogLevel } from "../../utils/logger";
+import { OUTPUT_PUBLISH_BYTES, ProcessTerminationError } from "../../core/owned-process";
 
 suite("TestExecutor Unit Tests", () => {
-  let testExecutor: TestExecutor;
-
-  setup(() => {
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock terminal creation
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        // Only check for file path and line number if present
-        if (text.includes(":")) {
-          assert.ok(text.includes("/test/path/test.feature:5"));
-        } else {
-          assert.ok(text.includes("/test/path/test.feature"));
-        }
-      },
-    };
-
-    // Fix type mismatches in mocks
-    const mockStartDebugging = (_workspace: any, _config: any) =>
-      Promise.resolve(true);
-
-    const mockWorkspace = {
-      getConfiguration: () => mockConfig,
-      workspaceFolders: undefined,
-    } as any;
-    const mockWindow = {
-      createTerminal: () => mockTerminal,
-      showErrorMessage: () => {},
-    } as any;
-    const mockDebug = { startDebugging: mockStartDebugging } as any;
-    testExecutor = new TestExecutor(mockWorkspace, mockWindow, mockDebug);
-  });
-
-  test("Should load configuration correctly", () => {
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock vscode.workspace.getConfiguration
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-    vscode.workspace.getConfiguration = () => mockConfig as any;
-
-    // Test that TestExecutor can be instantiated
-    assert.doesNotThrow(() => {
-      new TestExecutor();
+  const config = { workingDirectory: "/explicit/project", behaveCommand: "behave" } as ExtensionConfig;
+  function createExecutor(debug?: typeof vscode.debug, configured: ExtensionConfig = config) {
+    const executor = new TestExecutor(undefined, undefined, debug, configured);
+    const folder = { uri: vscode.Uri.file(require("node:path").parse(process.cwd()).root), name: "unit project", index: 0 };
+    const project: ProjectContext = { folder, cwd: configured.workingDirectory, config: { ...configured, maxParallelProcesses: 16 } as ExtensionConfig, builder: new BehaveCommandBuilder(configured) };
+    executor.resolveProjects = async () => new Map([[folder.uri.toString(), project]]);
+    return executor;
+  }
+  test("admission spans a complete operation and is shared across executor instances", async () => {
+    const executor = createExecutor();
+    const second = createExecutor();
+    let entered: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {entered = resolve;});
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {release = resolve;});
+    const active = executor.withExecutionSession(async (session) => {
+      assert.ok(session.signal); entered(); await gate;
     });
-
-    // Restore original function
-    vscode.workspace.getConfiguration = originalGetConfiguration;
+    await ready;
+    await assert.rejects(second.withExecutionSession(async () => {}), /already in progress/u);
+    release(); await active;
+    await second.withExecutionSession(async () => {});
+    await executor.dispose(); await second.dispose();
   });
-
-  test("Should reload configuration", () => {
-    // This test verifies the method exists and doesn't throw
-    assert.doesNotThrow(() => {
-      testExecutor.reloadConfiguration();
+  test("disposal cancels immediately and waits for operation drainage", async () => {
+    const executor = createExecutor();
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {finish = resolve;});
+    let signal: AbortSignal | undefined;
+    const active = executor.withExecutionSession(async (session) => {signal = session.signal; await gate;});
+    let drained = false;
+    const disposal = executor.dispose().then(() => {drained = true;});
+    assert.strictEqual(signal?.aborted, true);
+    assert.strictEqual(drained, false);
+    await assert.rejects(executor.withExecutionSession(async () => {}), /disposed/u);
+    finish(); await active; await disposal;
+    assert.ok(drained);
+  });
+  test("the operation display limit preserves complete UTF-8 characters and publishes one notice", async () => {
+    const executor = createExecutor();
+    let output = "";
+    await executor.withExecutionSession(async (session) => {
+      session.publish("x".repeat(OUTPUT_PUBLISH_BYTES - 1));
+      session.publish("😀");
+      session.publish("discarded");
+    }, undefined, (text) => {output += text;});
+    assert.strictEqual(output, "x".repeat(OUTPUT_PUBLISH_BYTES - 1) + "\n[Output truncated: the operation reached the 1 MiB display limit]\n");
+    await executor.dispose();
+  });
+  test("stream text and alias messages share one UTF-8 budget and a detached session cannot reuse it", async () => {
+    const executor = createExecutor();
+    let stream = "";
+    let message = "";
+    let detached: ((text: string) => string) | undefined;
+    const format = (text: string) => text.replace(/\r?\n/g, "\r\n");
+    await executor.withExecutionSession(async (session) => {
+      detached = session.limitDisplay;
+      session.publish("stream\n");
+      message = session.limitDisplay("😀".repeat(OUTPUT_PUBLISH_BYTES));
+      assert.strictEqual(session.limitDisplay("later alias"), "", "Aliases cannot acquire a fresh message budget");
+    }, undefined, (text) => {stream += text;}, format);
+    const notice = format("\n[Output truncated: the operation reached the 1 MiB display limit]\n");
+    assert.ok(message.includes(notice));
+    assert.ok(!message.includes("�"));
+    assert.ok(Buffer.byteLength(stream + message) <= OUTPUT_PUBLISH_BYTES + Buffer.byteLength(notice));
+    assert.strictEqual(detached?.("after completion"), "");
+    await executor.withExecutionSession(async (session) => {
+      assert.strictEqual(detached?.("during another operation"), "");
+      assert.strictEqual(session.limitDisplay("fresh operation"), "fresh operation");
     });
+    await executor.dispose();
   });
-
-  test("Should build behave command correctly", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-      scenarioName: "Test Scenario",
-    };
-
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-        // Print the actual command for debugging
-         
-        console.log("COMMAND SENT TO TERMINAL:", text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-
-    vscode.window.createTerminal = () => mockTerminal as any;
-    vscode.workspace.getConfiguration = () => mockConfig as any;
-
-    // Create a fresh TestExecutor instance with the mocked configuration
-    const freshTestExecutor = new TestExecutor();
-
-    // Test run scenario
-    await freshTestExecutor.runScenario(options);
-
-    // Check that the behave command was sent (it should be the last command)
-     
-    console.log("ALL SENT COMMANDS:", sentCommands);
-    const behaveCommand = sentCommands.find((cmd) =>
-      cmd.includes("/test/path/test.feature:5")
-    );
-    assert.ok(
-      behaveCommand,
-      `Expected command with path not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-
-    // Restore original functions
-    vscode.window.createTerminal = originalCreateTerminal;
-    vscode.workspace.getConfiguration = originalGetConfiguration;
+  test("cancellation is observable before any selected unit is launched", async () => {
+    const executor = createExecutor();
+    const token = new vscode.CancellationTokenSource(); token.cancel();
+    await executor.withExecutionSession(async (session) => {assert.ok(session.signal.aborted);}, token.token);
+    token.dispose(); await executor.dispose();
   });
-
-  test("Should build behave command without line number", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      scenarioName: "Test Scenario",
-    };
-
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-
-    vscode.window.createTerminal = () => mockTerminal as any;
-    vscode.workspace.getConfiguration = () => mockConfig as any;
-
-    // Create a fresh TestExecutor instance with the mocked configuration
-    const freshTestExecutor = new TestExecutor();
-
-    // Test run scenario
-    await freshTestExecutor.runScenario(options);
-
-    // Check that the behave command was sent (it should be the last command)
-    const behaveCommand = sentCommands.find((cmd) =>
-      cmd.includes("/test/path/test.feature")
-    );
-    assert.ok(
-      behaveCommand,
-      `Expected command with path not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-    assert.ok(
-      !behaveCommand.includes(":"),
-      `Command should not include line number: ${behaveCommand}`
-    );
-
-    // Restore original functions
-    vscode.window.createTerminal = originalCreateTerminal;
-    vscode.workspace.getConfiguration = originalGetConfiguration;
-  });
-
-  test("Should create debug configuration correctly", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-      scenarioName: "Test Scenario",
-      debug: true,
-    };
-
-    // Mock debug.startDebugging
-    const mockStartDebugging = (_workspace: any, _config: any) => {
-      assert.strictEqual(_config.name, "Debug: Test Scenario");
-      assert.ok(["debugpy", "python"].includes(_config.type));
-      assert.strictEqual(_config.request, "launch");
-      assert.strictEqual(_config.module, "behave");
-      assert.deepStrictEqual(_config.args, [
-        "/test/path/test.feature:5",
-        "--name",
-        "Test Scenario",
-      ]);
-      assert.strictEqual(_config.cwd, "/test/working/dir");
-      assert.strictEqual(_config.console, "integratedTerminal");
-      assert.strictEqual(_config.justMyCode, false);
-      return Promise.resolve(true);
-    };
-
-    const originalStartDebugging = vscode.debug.startDebugging;
-    vscode.debug.startDebugging = mockStartDebugging;
-
-    // Test debug scenario
-    await testExecutor.debugScenario(options);
-
-    // Restore original function
-    vscode.debug.startDebugging = originalStartDebugging;
-  });
-
-  test("Should create debug configuration without scenario name", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-      debug: true,
-    };
-
-    // Mock debug.startDebugging
-    const mockStartDebugging = (_workspace: any, _config: any) => {
-      assert.strictEqual(_config.name, "Debug: Test Scenario");
-      assert.ok(["debugpy", "python"].includes(_config.type));
-      assert.strictEqual(_config.request, "launch");
-      assert.strictEqual(_config.module, "behave");
-      assert.deepStrictEqual(_config.args, ["/test/path/test.feature:5"]);
-      assert.strictEqual(_config.cwd, "/test/working/dir");
-      assert.strictEqual(_config.console, "integratedTerminal");
-      assert.strictEqual(_config.justMyCode, false);
-      return Promise.resolve(true);
-    };
-
-    const originalStartDebugging = vscode.debug.startDebugging;
-    vscode.debug.startDebugging = mockStartDebugging;
-
-    // Test debug scenario
-    await testExecutor.debugScenario(options);
-
-    // Restore original function
-    vscode.debug.startDebugging = originalStartDebugging;
-  });
-
-  test("Should handle debug configuration error", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-      scenarioName: "Test Scenario",
-      debug: true,
-    };
-
-    // Mock debug.startDebugging to throw error
-
-    const mockStartDebugging = (_workspace: any, _config: any) => {
-      throw new Error("Debug configuration error");
-    };
-
-    // Mock window.showErrorMessage
-    const mockShowErrorMessage = (_message: string) => {
-      assert.ok(_message.includes("Failed to start debug session"));
-      return Promise.resolve("OK");
-    };
-
-    const originalStartDebugging = vscode.debug.startDebugging;
-    const originalShowErrorMessage = vscode.window.showErrorMessage;
-
-    vscode.debug.startDebugging = mockStartDebugging;
-    vscode.window.showErrorMessage = mockShowErrorMessage;
-
-    // Test debug scenario with error
-    await testExecutor.debugScenario(options);
-
-    // Restore original functions
-    vscode.debug.startDebugging = originalStartDebugging;
-    vscode.window.showErrorMessage = originalShowErrorMessage;
-  });
-
-  test("Should run feature file", async () => {
-    const filePath = "/test/path/test.feature";
-
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-
-    vscode.window.createTerminal = () => mockTerminal as any;
-    vscode.workspace.getConfiguration = () => mockConfig as any;
-
-    // Create a fresh TestExecutor instance with the mocked configuration
-    const freshTestExecutor = new TestExecutor();
-
-    // Test run feature file
-    await freshTestExecutor.runFeatureFile({ filePath });
-
-    // Check that the behave command was sent
-    const behaveCommand = sentCommands.find((cmd) => cmd.includes(filePath));
-    assert.ok(
-      behaveCommand,
-      `Expected command with path not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-    assert.ok(
-      behaveCommand.includes("behave"),
-      `Command should include 'behave': ${behaveCommand}`
-    );
-
-    // Restore original functions
-    vscode.window.createTerminal = originalCreateTerminal;
-    vscode.workspace.getConfiguration = originalGetConfiguration;
-  });
-
-  test("Should run all tests", async () => {
-    // Mock workspace configuration
-    const mockConfig = {
-      get: (key: string, defaultValue: any) => {
-        switch (key) {
-          case "behaveCommand":
-            return "behave";
-          case "workingDirectory":
-            return "/test/working/dir";
-          case "autoDiscoverTests":
-            return true;
-          case "testFilePattern":
-            return "**/*.feature";
-          default:
-            return defaultValue;
-        }
-      },
-    };
-
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    const originalGetConfiguration = vscode.workspace.getConfiguration;
-
-    vscode.window.createTerminal = () => mockTerminal as any;
-    vscode.workspace.getConfiguration = () => mockConfig as any;
-
-    // Create a fresh TestExecutor instance with the mocked configuration
-    const freshTestExecutor = new TestExecutor();
-
-    // Test run all tests
-    await freshTestExecutor.runAllTests();
-
-    // Check that the behave command was sent and does NOT include any .feature file
-    const behaveCommand = sentCommands.find((cmd) => cmd.includes("behave"));
-    assert.ok(
-      behaveCommand,
-      `Expected behave command not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-    assert.ok(
-      !/\.feature/.test(behaveCommand),
-      `Command should not include any .feature file: ${behaveCommand}`
-    );
-
-    // Restore original functions
-    vscode.window.createTerminal = originalCreateTerminal;
-    vscode.workspace.getConfiguration = originalGetConfiguration;
-  });
-
-  test("Should execute test with output", async () => {
-    const options: TestExecutionOptions = {
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-    };
-
-    // Collect all sent commands
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    vscode.window.createTerminal = () => mockTerminal as any;
-
-    // Create a fresh TestExecutor instance to ensure the mock is used
-    const freshTestExecutor = new TestExecutor();
-
-    // Test execute test with output
-    const result = await freshTestExecutor.executeTestWithOutput(options);
-
-    // Assert that a behave command with the correct file and line was sent
-    const behaveCommand = sentCommands.find(
-      (cmd) =>
-        cmd.includes("behave") && cmd.includes("/test/path/test.feature:5")
-    );
-    assert.ok(
-      behaveCommand,
-      `Expected behave command with file and line not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-
-    assert.ok(result);
-    assert.strictEqual(result.success, true);
-    assert.strictEqual(typeof result.output, "string");
-    assert.strictEqual(typeof result.duration, "number");
-    assert.ok(result.duration > 0);
-
-    // Restore original function
-    vscode.window.createTerminal = originalCreateTerminal;
-  });
-
-  test("Should validate behave installation", () => {
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    vscode.window.createTerminal = () => mockTerminal as any;
-
-    // Create a fresh TestExecutor instance to avoid using the global one
-    const freshTestExecutor = new TestExecutor();
-
-    // Test validate behave installation
-    const result = freshTestExecutor.validateBehaveInstallation();
-
-    // Check that the behave --version command was sent
-    const behaveCommand = sentCommands.find((cmd) =>
-      cmd.includes("behave --version")
-    );
-    assert.ok(
-      behaveCommand,
-      `Expected behave --version command not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-
-    assert.strictEqual(typeof result, "boolean");
-    assert.strictEqual(result, true);
-
-    // Restore original function
-    vscode.window.createTerminal = originalCreateTerminal;
-  });
-
-  test("Should handle custom working directory", async () => {
-    // Mock the ExtensionConfig singleton
-    const mockExtensionConfig = {
-      behaveCommand: "behave",
-      workingDirectory: "/custom/working/dir",
-      autoDiscoverTests: true,
-      testFilePattern: "**/*.feature",
-      parallelExecution: false,
-      maxParallelProcesses: 4,
-      outputFormat: "pretty",
-      tags: "",
-      dryRun: false,
-      reload: () => {},
-      validate: () => {},
-      isValid: () => true,
-      getValidationErrors: () => [],
-      addChangeListener: () => {},
-      removeChangeListener: () => {},
-      dispose: () => {},
-      getAllConfig: () => ({
-        behaveCommand: "behave",
-        workingDirectory: "/custom/working/dir",
-        autoDiscoverTests: true,
-        testFilePattern: "**/*.feature",
-        parallelExecution: false,
-        maxParallelProcesses: 4,
-        outputFormat: "pretty",
-        tags: "",
-        dryRun: false,
-      }),
-      getIntelligentBehaveCommand: async () => "behave",
-    };
-
-    // Mock terminal creation
-    const sentCommands: string[] = [];
-    const mockTerminal = {
-      show: () => {},
-      sendText: (text: string) => {
-        sentCommands.push(text);
-      },
-    };
-
-    const originalCreateTerminal = vscode.window.createTerminal;
-    vscode.window.createTerminal = () => mockTerminal as any;
-
-    // Create a TestExecutor with mocked ExtensionConfig
-    const testExecutor = new TestExecutor();
-    // Replace the config with our mock
-    (testExecutor as any).config = mockExtensionConfig;
-
-    // Test run scenario
-    await testExecutor.runScenario({
-      filePath: "/test/path/test.feature",
-      lineNumber: 5,
-      scenarioName: "Test",
-    });
-
-    // Check that the behave command was sent
-    const behaveCommand = sentCommands.find((cmd) => cmd.includes("behave"));
-    assert.ok(
-      behaveCommand,
-      `Expected behave command not found. All commands: ${JSON.stringify(
-        sentCommands
-      )}`
-    );
-
-    // Check that the cd command was sent (if working directory is different)
-    const cdCommand = sentCommands.find((cmd) =>
-      cmd.includes('cd "/custom/working/dir"')
-    );
-    if (process.cwd() !== "/custom/working/dir") {
-      assert.ok(
-        cdCommand,
-        `Expected cd command not found. All commands: ${JSON.stringify(
-          sentCommands
-        )}`
-      );
+  test("unconfirmed probe termination remains an execution error when cancellation is already requested", async () => {
+    let begin: () => void = () => {};
+    const probing = new Promise<void>((resolve) => {begin = resolve;});
+    let fail: () => void = () => {};
+    const failed = new Promise<void>((resolve) => {fail = resolve;});
+    const probeConfig = { ...config, getIntelligentBehaveCommand: async () => {
+      begin(); await failed;
+      const failure = new ProcessTerminationError("probe is still present");
+      failure.message = "Reload the window: probe stop was unconfirmed.";
+      throw failure;
+    } } as unknown as ExtensionConfig;
+    const executor = createExecutor(undefined, probeConfig);
+    const token = new vscode.CancellationTokenSource();
+    const previousPoison = (TestExecutor as any).poison;
+    try {
+      const pending = executor.withExecutionSession((session) => executor.runScenarioWithOutput({ filePath: "a.feature" }, session), token.token);
+      await probing;
+      token.cancel(); fail();
+      const result = await pending;
+      assert.strictEqual(result.errored, true, "A failed stop takes precedence over the cancelled signal");
+      assert.strictEqual(result.cancelled, undefined);
+      const second = createExecutor();
+      await assert.rejects(second.withExecutionSession(async () => {}), /Reload the window/u);
+      await second.dispose();
+    } finally {
+      fail(); await executor.dispose(); token.dispose(); (TestExecutor as any).poison = previousPoison;
     }
-
-    // Restore original function
-    vscode.window.createTerminal = originalCreateTerminal;
   });
+  test("report parsers preserve localized and empty display names, skipped fields and inferred legacy statuses", () => {
+    let logged = "";
+    const logger = new Logger({ appendLine: (text: string) => {logged += text;} } as vscode.OutputChannel, LogLevel.DEBUG);
+    const behave = new BehaveJsonParser(logger);
+    const cucumber = new CucumberJsonParser(logger);
+    for (const name of ["", "確認する"] ) {
+      const steps = [{ name, result: { status: "passed" } }];
+      const report = JSON.stringify([{ filename: "example.feature", elements: [
+        { type: "scenario", name, line: 3, steps },
+        { type: "scenario", name, location: "example.feature:8", status: "skipped", steps: [{ name }] },
+      ] }]);
+      assert.deepStrictEqual(behave.parseBehaveJsonOutput(report).map((result) => result.status), ["passed", "skipped"]);
+      const suite = cucumber.parseCucumberJson(JSON.stringify([{ uri: "example.feature", elements: [{ name, line: 3, steps }] }]));
+      assert.strictEqual(suite.tests[0]?.name, name);
+      assert.strictEqual(suite.tests[0]?.status, "passed");
+    }
+    for (const status of ["unknown", "untested", "executing", "xfailed", "xpassed", "pending_warn", "untested_pending", "untested_undefined"]) {
+      const report = JSON.stringify([{ filename: "example.feature", elements: [{ type: "scenario", name: "", line: 3, status, steps: [] }] }]);
+      assert.strictEqual(behave.parseBehaveJsonOutput(report)[0]?.status, status, "Existing Behave status semantics remain available to the consumer");
+    }
+    assert.ok(logged.length < 4096, "Summary diagnostics must not include report bodies");
+  });
+  test("valid JSON with invalid primary feature or scenario shapes throws for both parsers", () => {
+    const behave = new BehaveJsonParser();
+    const cucumber = new CucumberJsonParser();
+    for (const report of ["[{}]", '[{"filename":"example.feature","elements":[null]}]',
+      '[{"filename":"example.feature","elements":[{"type":"scenario","name":"broken","line":3,"steps":[]}]}]']) {
+      assert.throws(() => behave.parseBehaveJsonOutput(report), /Invalid Behave report/u);
+    }
+    for (const report of ["[{}]", '[{"uri":"example.feature","elements":[null]}]',
+      '[{"uri":"example.feature","elements":[{"name":"broken","line":3,"steps":[{}]}]}]']) {
+      assert.throws(() => cucumber.parseCucumberJson(report), /Invalid cucumber report/u);
+    }
+  });
+  test("unsupported shell and secondary batch prefixes never reach process launch", async () => {
+    const processes = require("node:child_process") as typeof import("node:child_process");
+    const spawn = processes.spawn;
+    let launches = 0;
+    (processes as any).spawn = () => {launches++; throw new Error("unexpected launch");};
+    try {
+      for (const command of ["cmd.exe /c behave.cmd", '"C:\\Windows\\System32\\cmd.exe" /c behave', "/bin/bash -c behave",
+        "pwsh -Command behave", "poetry run /bin/zsh -c behave", "uv run C:/tools/behave.bat"]) {
+        const executor = createExecutor(undefined,
+          { ...config, getIntelligentBehaveCommand: async () => command } as unknown as ExtensionConfig);
+        const result = await executor.runFeatureFileWithOutput({ filePath: "a.feature" });
+        assert.strictEqual(result.errored, true, command);
+        assert.match(result.error!, /Invalid test command/u);
+        await executor.dispose();
+      }
+      assert.strictEqual(launches, 0);
+    } finally {(processes as any).spawn = spawn;}
+  });
+  test("parallel workers obey configured concurrency and the hard limit of sixteen", async () => {
+    for (const configured of [1, 3, 99]) {
+      const executor = createExecutor();
+      const limit = Math.min(configured, 16);
+      const projects = await executor.resolveProjects();
+      const project = projects.values().next().value!;
+      executor.resolveProjects = async () => new Map([[project.folder.uri.toString(), { ...project, config: { ...config, maxParallelProcesses: limit } as ExtensionConfig }]]);
+      let active = 0;
+      let peak = 0;
+      let started: () => void = () => {};
+      const full = new Promise<void>((resolve) => {started = resolve;});
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {release = resolve;});
+      const files: string[] = [];
+      executor.runFeatureFileWithOutput = async (options) => {
+        assert.strictEqual(options.outputFormat, "json", "Per-call format must survive the parallel worker boundary");
+        files.push(options.filePath); active++; peak = Math.max(peak, active);
+        if (active === limit) {started();}
+        await gate; active--;
+        return { success: true, output: "", duration: 1 };
+      };
+      const pending = executor.runTestsInParallel({ featureFiles: Array.from({ length: 20 }, (_, index) => `${index}.feature`), maxProcesses: configured, outputFormat: "json" });
+      await full;
+      assert.strictEqual(files.length, limit);
+      release(); await pending;
+      assert.strictEqual(files.length, 20);
+      assert.strictEqual(peak, limit);
+      await executor.dispose();
+    }
+  });
+  test("parallel report, launch and test failures reject after all owned workers drain", async () => {
+    for (const errored of [false, true]) {
+      const executor = createExecutor();
+      let finished = 0;
+      executor.runFeatureFileWithOutput = async () => {finished++; return { success: false, errored, output: "", duration: 1 };};
+      await assert.rejects(executor.runTestsInParallel({ featureFiles: ["a.feature", "b.feature"], maxProcesses: 2 }), /2 parallel feature execution/u);
+      assert.strictEqual(finished, 2);
+      await executor.dispose();
+    }
+  });
+  test("debug retains admission until the matching real session terminates", async () => {
+    const starts = new vscode.EventEmitter<vscode.DebugSession>();
+    const ends = new vscode.EventEmitter<vscode.DebugSession>();
+    let launched: () => void = () => {};
+    const launch = new Promise<void>((resolve) => {launched = resolve;});
+    let candidate: vscode.DebugSession;
+    const debug = { onDidStartDebugSession: starts.event, onDidTerminateDebugSession: ends.event,
+      startDebugging: async (_folder: unknown, configuration: vscode.DebugConfiguration) => {
+        candidate = { id: "owned", configuration } as vscode.DebugSession; starts.fire(candidate); launched(); return true;
+      }, stopDebugging: async (target: vscode.DebugSession) => {assert.strictEqual(target, candidate); ends.fire(candidate);} } as unknown as typeof vscode.debug;
+    const executor = createExecutor(debug);
+    const token = new vscode.CancellationTokenSource();
+    const pending = executor.withExecutionSession(async (session) => executor.debugScenario({ filePath: "a.feature", lineNumber: 17 }, session), token.token);
+    await launch;
+    await assert.rejects(executor.withExecutionSession(async () => {}), /already in progress/u);
+    ends.fire({ configuration: {} } as vscode.DebugSession);
+    token.cancel(); await pending;
+    await executor.withExecutionSession(async () => {});
+    token.dispose(); starts.dispose(); ends.dispose(); await executor.dispose();
+  });
+  test("cancellation before debug launch releases observers without poisoning admission", async () => {
+    const starts = new vscode.EventEmitter<vscode.DebugSession>();
+    const ends = new vscode.EventEmitter<vscode.DebugSession>();
+    let released = 0;
+    const observe = (event: vscode.Event<vscode.DebugSession>) => (listener: (candidate: vscode.DebugSession) => unknown) => {
+      const registration = event(listener);
+      return new vscode.Disposable(() => {released++; registration.dispose();});
+    };
+    let launches = 0;
+    const debug = { onDidStartDebugSession: observe(starts.event), onDidTerminateDebugSession: observe(ends.event),
+      startDebugging: async () => {launches++; return false;} } as unknown as typeof vscode.debug;
+    const executor = createExecutor(debug);
+    const builder = (await executor.resolveProjects()).values().next().value!.builder;
+    const build = builder.buildDebugConfiguration.bind(builder);
+    let begin: () => void = () => {};
+    const building = new Promise<void>((resolve) => {begin = resolve;});
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {finish = resolve;});
+    builder.buildDebugConfiguration = async (...args) => {begin(); await gate; return build(...args);};
+    const token = new vscode.CancellationTokenSource();
+    const pending = executor.withExecutionSession((session) => executor.debugScenario({ filePath: "a.feature" }, session), token.token);
+    await building;
+    token.cancel(); finish();
+    await assert.rejects(pending, /aborted/u);
+    assert.strictEqual(launches, 0);
+    assert.strictEqual(released, 2);
+    await executor.withExecutionSession(async () => {});
+    token.dispose(); starts.dispose(); ends.dispose(); await executor.dispose();
+  });
+  test("a declined debugger launch releases admission", async () => {
+    const starts = new vscode.EventEmitter<vscode.DebugSession>(); const ends = new vscode.EventEmitter<vscode.DebugSession>();
+    const debug = { onDidStartDebugSession: starts.event, onDidTerminateDebugSession: ends.event, startDebugging: async () => false } as unknown as typeof vscode.debug;
+    const executor = createExecutor(debug);
+    await assert.rejects(executor.debugScenario({ filePath: "a.feature" }), /declined/u);
+    await executor.withExecutionSession(async () => {});
+    starts.dispose(); ends.dispose(); await executor.dispose();
+  });
+  for (const delayedLaunch of [false, true]) {
+    test(`late debug start remains owned after ${delayedLaunch ? "cancellation during a pending launch" : "start acknowledgement timeout"}`, async () => {
+      const starts = new vscode.EventEmitter<vscode.DebugSession>();
+      const ends = new vscode.EventEmitter<vscode.DebugSession>();
+      const schedule = global.setTimeout;
+      const deadlines = new Map<ReturnType<typeof setTimeout>, () => void>();
+      let acknowledge: () => void = () => {};
+      const acknowledgementPending = new Promise<void>((resolve) => {acknowledge = resolve;});
+      let acknowledgementCount = 0;
+      let expire: (() => void) | undefined;
+      global.setTimeout = ((callback: () => void, delay: number) => {
+        const handle = schedule(callback, delay);
+        if (delay === 10000) {
+          deadlines.set(handle, callback);
+          if (++acknowledgementCount === 2) {expire = callback; acknowledge();}
+        }
+        return handle;
+      }) as typeof setTimeout;
+      let configuration!: vscode.DebugConfiguration;
+      let launchReady: () => void = () => {};
+      const launched = new Promise<void>((resolve) => {launchReady = resolve;});
+      let accept: (value: boolean) => void = () => {};
+      const launch = new Promise<boolean>((resolve) => {accept = resolve;});
+      let stopped: (target: vscode.DebugSession) => void = () => {};
+      const stopObserved = new Promise<vscode.DebugSession>((resolve) => {stopped = resolve;});
+      let observers = 0;
+      const observe = (source: vscode.EventEmitter<vscode.DebugSession>) => (listener: (candidate: vscode.DebugSession) => unknown) => {
+        observers++;
+        const registration = source.event(listener);
+        let disposed = false;
+        return { dispose: () => {if (!disposed) {disposed = true; observers--; registration.dispose();}} };
+      };
+      const debug = { onDidStartDebugSession: observe(starts), onDidTerminateDebugSession: observe(ends),
+        startDebugging: (_folder: unknown, config: vscode.DebugConfiguration) => {
+          configuration = config; launchReady(); return delayedLaunch ? launch : Promise.resolve(true);
+        }, stopDebugging: async (target: vscode.DebugSession) => {stopped(target);} } as unknown as typeof vscode.debug;
+      const executor = createExecutor(debug);
+      const token = new vscode.CancellationTokenSource();
+      const previousPoison = (TestExecutor as any).poison;
+      const pending = executor.withExecutionSession((session) => executor.debugScenario({ filePath: "a.feature" }, session), token.token);
+      const rejected = assert.rejects(pending, /not confirmed/u);
+      try {
+        await launched;
+        if (delayedLaunch) {token.cancel();}
+        await acknowledgementPending;
+        assert.ok(expire, "The start acknowledgement must have installed its bounded deadline");
+        expire();
+        await rejected;
+        await executor.dispose();
+        assert.strictEqual(observers, 2, "Unknown start retains both matching lifecycle observers after disposal");
+        const second = createExecutor();
+        await assert.rejects(second.withExecutionSession(async () => {}), /not confirmed/u);
+        await second.dispose();
+        if (delayedLaunch) {accept(true); await launch;}
+        const candidate = { id: "late-owned", configuration } as vscode.DebugSession;
+        starts.fire({ configuration: {} } as vscode.DebugSession);
+        starts.fire(candidate);
+        assert.strictEqual(await stopObserved, candidate, "A late start must stop the specifically owned session");
+        ends.fire(candidate);
+        assert.strictEqual(observers, 0, "Known termination releases retained observers");
+      } finally {
+        for (const handle of deadlines.keys()) {clearTimeout(handle);}
+        global.setTimeout = schedule;
+        (TestExecutor as any).poison = previousPoison;
+        token.dispose(); starts.dispose(); ends.dispose();
+      }
+    });
+  }
+
 });
 
 suite('PythonDetector', () => {
   test('should prefer venv python if detected', async () => {
-    const detector = PythonDetector.getInstance();
+    const detector = PythonDetector.create();
     // Mock detectVenvPython to return a fake venv path
     detector.detectVenvPython = async () => '/fake/venv/bin/python';
     // Mock testBehaveCommand to always return false for direct behave, true for venv
     detector.testBehaveCommand = async (cmd: string) => cmd.startsWith('/fake/venv/bin/python');
     const command = await detector.getBestBehaveCommand();
-    expect(command).to.equal('/fake/venv/bin/python -m behave');
+    assert.strictEqual(command, '"/fake/venv/bin/python" -m behave');
     detector.clearCache();
   });
 });
@@ -632,7 +358,7 @@ suite('CommandManager TestItemMap', () => {
     const fakeTestItem = { id: 'test1' } as any;
     manager.addTestItemToMap('/path/to/file.feature', 10, 'Scenario Name', fakeTestItem);
     const found = manager.getTestItemFromMap('/path/to/file.feature', 10, 'Scenario Name');
-    expect(found).to.equal(fakeTestItem);
+    assert.strictEqual(found, fakeTestItem);
     manager.clearTestItemMap();
   });
 
@@ -642,15 +368,15 @@ suite('CommandManager TestItemMap', () => {
     manager.addTestItemToMap('/path/to/file.feature', 20, 'Another Scenario', fakeTestItem);
     manager.clearTestItemMap();
     const found = manager.getTestItemFromMap('/path/to/file.feature', 20, 'Another Scenario');
-    expect(found).to.be.undefined;
+    assert.strictEqual(found, undefined);
   });
 
   test('should block test execution when discovery is in progress', () => {
     const manager = CommandManager.getInstance();
     manager.setTestDiscoveryInProgress(true);
-    expect(manager.getIsTestRunning()).to.be.true;
+    assert.strictEqual(manager.getIsTestRunning(), true);
     manager.setTestDiscoveryInProgress(false);
-    expect(manager.getIsTestRunning()).to.be.false;
+    assert.strictEqual(manager.getIsTestRunning(), false);
   });
 });
 
@@ -672,7 +398,7 @@ test('Should run only the specific scenario outline example from CodeLens', asyn
   const scenarioName = '1: Login with different credentials - username: admin, password: secret, result: success';
   await manager['runScenario'](filePath, lineNumber, scenarioName);
   // Should run only the specific example
-  expect(calledWith).to.include({ filePath, lineNumber, scenarioName });
+  assert.deepStrictEqual({ filePath: calledWith.filePath, lineNumber: calledWith.lineNumber, scenarioName: calledWith.scenarioName }, { filePath, lineNumber, scenarioName });
 });
 
 test('Should debug only the specific scenario outline example from CodeLens with quoted name', async () => {
@@ -689,96 +415,6 @@ test('Should debug only the specific scenario outline example from CodeLens with
   const scenarioName = '1: Login with different credentials - username: admin, password: secret, result: success';
   await manager['debugScenario'](filePath, lineNumber, scenarioName);
   // Should pass the scenarioName without quotes (TestExecutor handles quoting internally)
-  expect(calledWith).to.include({ filePath, lineNumber });
-  expect(calledWith.scenarioName).to.equal(scenarioName);
-});
-
-suite('Behave Command Consistency', () => {
-  let testExecutor: TestExecutor;
-  let sentCommands: string[];
-  let debugArgs: any[];
-  let mockExtensionConfig: any;
-
-  setup(() => {
-    sentCommands = [];
-    debugArgs = [];
-    mockExtensionConfig = {
-      getIntelligentBehaveCommand: async () => 'behave',
-      tags: undefined,
-      outputFormat: undefined,
-      dryRun: false,
-    };
-    testExecutor = new TestExecutor();
-    (testExecutor as any).config = mockExtensionConfig;
-    // Mock terminal
-    (testExecutor as any).executeCommand = (cmd: string) => {
-      sentCommands.push(cmd);
-    };
-    // Mock debug
-    (testExecutor as any).debug = {
-      startDebugging: (_ws: any, config: any) => {
-        debugArgs.push(config.args);
-        return Promise.resolve(true);
-      },
-    };
-    // Mock fs.existsSync to always return true
-    (testExecutor as any).fs = { existsSync: () => true };
-    // Patch fs.existsSync globally for scenario outline detection
-    (require('fs').existsSync as any) = () => true;
-  });
-
-  test('debugScenario and runScenario generate the same command for scenario outline', async () => {
-    const options = {
-      filePath: '/test/path/outline.feature',
-      scenarioName: 'Outline Scenario',
-      lineNumber: 10,
-    };
-    // Run scenario outline
-    await testExecutor.runScenario(options);
-    // Debug scenario outline
-    await testExecutor.debugScenario(options);
-    // Extract the behave command from runScenario
-    const runCmd = sentCommands.find(cmd => cmd.includes('behave'));
-    assert.ok(runCmd, 'No behave command was captured for runScenario');
-    // Extract the behave args from debugScenario
-    const debugCmdArgs = debugArgs[0];
-    // The run command should include --name="Outline Scenario"
-    assert.ok(runCmd!.includes('--name="Outline Scenario"'));
-    // The debug args should include --name and the scenario name as separate arguments
-    const debugNameIdx = debugCmdArgs.findIndex((arg: string) => arg === '--name');
-    assert.ok(debugNameIdx !== -1 && debugCmdArgs[debugNameIdx + 1] === 'Outline Scenario');
-    // The file path should match
-    assert.ok(runCmd!.includes(options.filePath));
-    assert.strictEqual(debugCmdArgs[0].startsWith(options.filePath), true);
-  });
-
-  test('debugScenario and runScenario generate the same command for scenario outline example', async () => {
-    const exampleName = '1: Outline Scenario - param: value';
-    const options = {
-      filePath: '/test/path/outline.feature',
-      scenarioName: exampleName,
-      lineNumber: 12,
-    };
-    
-    // Run scenario outline example
-    await testExecutor.runScenario(options);
-    
-    // Debug scenario outline example
-    await testExecutor.debugScenario(options);
-    
-    // Extract the behave command from runScenario
-    const runCmd = sentCommands.find(cmd => cmd.includes('behave'));
-    assert.ok(runCmd, 'No behave command was captured for runScenario (example)');
-    // Extract the behave args from debugScenario
-    assert.ok(debugArgs[0], 'No debug args were captured for debugScenario (example)');
-    const debugCmdArgs = debugArgs[0];
-    // The run command should include --name with the original outline name
-    assert.ok(runCmd!.includes('--name="Outline Scenario"'));
-    // The debug args should include --name and the original outline name as separate arguments
-    const debugNameIdx = debugCmdArgs.findIndex((arg: string) => arg === '--name');
-    assert.ok(debugNameIdx !== -1 && debugCmdArgs[debugNameIdx + 1] === 'Outline Scenario');
-    // The file path should match
-    assert.ok(runCmd!.includes(options.filePath));
-    assert.strictEqual(debugCmdArgs[0].startsWith(options.filePath), true);
-  });
+  assert.deepStrictEqual({ filePath: calledWith.filePath, lineNumber: calledWith.lineNumber }, { filePath, lineNumber });
+  assert.strictEqual(calledWith.scenarioName, scenarioName);
 });

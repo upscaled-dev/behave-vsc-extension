@@ -36,6 +36,7 @@ export interface Scenario {
   featureLineNumber?: number; // Line number of the Feature: keyword
   examplesBlockName?: string; // Name of the Examples block this example belongs to ("Examples: High Value Amounts")
   examplesBlockTags?: string[]; // Tags declared on the Examples block (apply only to examples in that block)
+  exampleValues?: Readonly<Record<string, string>>; // Raw row values used for outline-step navigation
   examplesBlockLineNumber?: number; // Line number of the parent Examples block
   backgroundSteps?: string[]; // Steps from the enclosing Background (feature- or rule-level)
   ruleName?: string; // Name of the Rule this scenario belongs to (Gherkin 6+)
@@ -62,11 +63,14 @@ export interface BehaveTestRunnerConfig {
  * Result of running a test
  */
 export interface TestRunResult {
+  outputStreamed?: boolean;
+  cancelled?: boolean;
+  errored?: boolean;
   success: boolean;
   output: string;
   /**
    * Human-readable native output to surface in the Test Results panel. For
-   * Behave this is the pretty formatter output (the machine-readable JSON lives
+   * Behave this is the selected formatter output (the machine-readable JSON lives
    * in `output`); for other frameworks it mirrors `output`.
    */
   display?: string | undefined;

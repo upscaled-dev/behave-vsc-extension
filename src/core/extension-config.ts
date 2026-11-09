@@ -1,3 +1,4 @@
+import { InvocationContext } from "./command-invocation";
 import * as vscode from "vscode";
 import { BehaveTestRunnerConfig, ConfigurationChangeListener } from "../types";
 import { PythonDetector } from "../utils/python-detector";
@@ -7,6 +8,8 @@ export class ExtensionConfig {
   private config: vscode.WorkspaceConfiguration;
   private changeListeners: ConfigurationChangeListener[] = [];
   private readonly pythonDetector: PythonDetector;
+  private configurationSubscription: vscode.Disposable | undefined;
+  private disposed = false;
 
   constructor(
     workspaceConfig?: vscode.WorkspaceConfiguration,
@@ -26,13 +29,39 @@ export class ExtensionConfig {
     return new ExtensionConfig(workspaceConfig, pythonDetector, setupChangeListener);
   }
 
+  /** Capture resource settings once so an admitted operation cannot change underneath a launch. */
+  public static forResource(resource: vscode.Uri): ExtensionConfig {
+    const source = vscode.workspace.getConfiguration("behaveTestRunner", resource);
+    const names = ["behaveCommand", "workingDirectory", "autoDiscoverTests", "testFilePattern", "parallelExecution",
+      "maxParallelProcesses", "outputFormat", "tags", "dryRun", "framework", "autoDetectFramework", "pytestCommand",
+      "stepDefinitionPaths"];
+    const values = new Map(names.map((name) => [name, source.get(name)]));
+    const framework = source.inspect<string>("framework");
+    const explicit = framework && [framework.globalValue, framework.workspaceValue, framework.workspaceFolderValue,
+      framework.globalLanguageValue, framework.workspaceLanguageValue, framework.workspaceFolderLanguageValue].some((value) => value !== undefined);
+    const snapshot = ExtensionConfig.create({
+      get: (name: string, fallback: unknown) => values.get(name) ?? fallback,
+    } as vscode.WorkspaceConfiguration, PythonDetector.create(), false);
+    snapshot.explicitFramework = Boolean(explicit);
+    return snapshot;
+  }
+
+  private explicitFramework: boolean | undefined;
+
+  public hasExplicitFramework(): boolean {
+    if (this.explicitFramework !== undefined) {return this.explicitFramework;}
+    const setting = this.config.inspect<string>("framework");
+    return Boolean(setting && [setting.globalValue, setting.workspaceValue, setting.workspaceFolderValue].some((value) => value !== undefined));
+  }
+
   public static getInstance(): ExtensionConfig {
     ExtensionConfig.instance ??= new ExtensionConfig();
     return ExtensionConfig.instance;
   }
 
   private setupConfigurationChangeListener(): void {
-    vscode.workspace.onDidChangeConfiguration((event) => {
+    this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
+      if (this.disposed) {return;}
       if (event.affectsConfiguration("behaveTestRunner")) {
         this.config = vscode.workspace.getConfiguration("behaveTestRunner");
         this.notifyChangeListeners();
@@ -40,8 +69,9 @@ export class ExtensionConfig {
     });
   }
 
-  public addChangeListener(listener: ConfigurationChangeListener): void {
+  public addChangeListener(listener: ConfigurationChangeListener): vscode.Disposable {
     this.changeListeners.push(listener);
+    return new vscode.Disposable(() => this.removeChangeListener(listener));
   }
 
   public removeChangeListener(listener: ConfigurationChangeListener): void {
@@ -57,10 +87,10 @@ export class ExtensionConfig {
     return this.config.get<string>("behaveCommand", "behave");
   }
 
-  public async getIntelligentBehaveCommand(): Promise<string> {
+  public async getIntelligentBehaveCommand(context?: InvocationContext): Promise<string> {
     const configured = this.behaveCommand;
     if (configured !== "behave") {return configured;}
-    return this.pythonDetector.getBestBehaveCommand();
+    return this.pythonDetector.getBestBehaveCommand(context);
   }
 
   public get workingDirectory(): string {
@@ -89,6 +119,15 @@ export class ExtensionConfig {
 
   public get outputFormat(): string {
     return this.config.get<string>("outputFormat", "pretty");
+  }
+
+  public static resolveBehaveOutputFormat(override?: string, configured?: string): string {
+    const format = override ?? configured ?? "pretty";
+    const supported = ["pretty", "plain", "json", "junit", "progress", "steps"];
+    if (!supported.includes(format)) {
+      throw new Error(`Unsupported Behave outputFormat '${format}'. Choose one of: ${supported.join(", ")}.`);
+    }
+    return format;
   }
 
   public get tags(): string {
@@ -125,9 +164,9 @@ export class ExtensionConfig {
     if (this.maxParallelProcesses < 1 || this.maxParallelProcesses > 16) {
       errors.push("maxParallelProcesses must be between 1 and 16");
     }
-    const validFormats = ["pretty", "plain", "json", "junit"];
-    if (!validFormats.includes(this.outputFormat)) {
-      errors.push(`outputFormat must be one of: ${validFormats.join(", ")}`);
+    if (this.getFramework() === "behave") {
+      try {ExtensionConfig.resolveBehaveOutputFormat(undefined, this.outputFormat);}
+      catch (error) {errors.push(error instanceof Error ? error.message : String(error));}
     }
     if (errors.length > 0) {
       throw new Error(`Configuration validation failed: ${errors.join(", ")}`);
@@ -158,8 +197,11 @@ export class ExtensionConfig {
   }
 
   public dispose(): void {
+    if (this.disposed) {return;}
+    this.disposed = true;
+    this.configurationSubscription?.dispose();
     this.changeListeners = [];
-    ExtensionConfig.instance = undefined;
+    if (ExtensionConfig.instance === this) {ExtensionConfig.instance = undefined;}
   }
 
   public getFramework(): string {
@@ -169,10 +211,6 @@ export class ExtensionConfig {
   public getPytestCommand(): string {
     const custom = this.config.get<string>("pytestCommand", "");
     return custom || "python3 -m pytest";
-  }
-
-  public getPytestBddFilePattern(): string {
-    return this.config.get<string>("pytestBddFilePattern", "**/*_test.py");
   }
 
   public isFrameworkAutoDetectionEnabled(): boolean {

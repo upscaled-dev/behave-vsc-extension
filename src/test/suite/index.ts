@@ -10,7 +10,7 @@ export async function run(): Promise<void> {
     ui: "tdd",
     color: true,
     timeout: 5000, // 5 second timeout
-    bail: true,
+    ...(process.env["TEST_GREP"] ? { grep: process.env["TEST_GREP"] } : {}),
   });
 
   const testsRoot = path.resolve(__dirname, "..");
@@ -82,24 +82,16 @@ export async function run(): Promise<void> {
     }
 
     console.log("Running Mocha...");
-    // Run the mocha test with timeout
-    await Promise.race([
-      new Promise<void>((resolve, reject) => {
-        mocha.run((failures: number) => {
-          console.log(`Mocha completed with ${failures} failures`);
-          if (failures > 0) {
-            reject(new Error(`${failures} tests failed.`));
-          } else {
-            resolve();
-          }
-        });
-      }),
-      new Promise<void>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error("Mocha test timed out after 10 seconds"));
-        }, 10000);
-      }),
-    ]);
+    await new Promise<void>((resolve, reject) => {
+      mocha.run((failures: number) => {
+        console.log(`Mocha completed with ${failures} failures`);
+        if (failures > 0) {
+          reject(new Error(`${failures} tests failed.`));
+        } else {
+          resolve();
+        }
+      });
+    });
 
     console.log("Test suite completed successfully");
   } catch (err) {

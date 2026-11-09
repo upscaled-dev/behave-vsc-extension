@@ -58,6 +58,10 @@ export class Logger {
     if (data) {this.outputChannel.appendLine(JSON.stringify(data, null, 2));}
   }
 
+  public appendOutput(text: string): void {
+    this.outputChannel.append(text);
+  }
+
   public showOutput(): void {
     this.outputChannel.show();
   }

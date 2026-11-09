@@ -1,8 +1,66 @@
 import * as assert from "assert";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { FeatureParser } from "../../parsers/feature-parser";
 
 suite("Feature Parser CodeLens Unit Tests", () => {
   const featureParser = FeatureParser.create();
+
+  test("English keyword aliases create CodeLenses at their physical headings and rows", () => {
+    const source = `Feature: English aliases
+  Example: Alias example
+    Given begin example
+    * finish example
+
+  Scenario Template: Alias template
+    Given begin <entry>
+    * finish <entry>
+    Scenarios: Alias rows
+      | entry |
+      | one   |
+      | two   |
+
+  Scenario: Original scenario
+    Given original scenario
+`;
+    const lenses = featureParser.provideScenarioCodeLenses(source, "/english-aliases.feature");
+    for (const command of ["behaveTestRunner.runScenario", "behaveTestRunner.debugScenario"]) {
+      assert.deepStrictEqual(lenses.filter((lens) => lens.command?.command === command).map((lens) => lens.command?.arguments), [
+        ["/english-aliases.feature", 2, "Alias example"],
+        ["/english-aliases.feature", 6, "Alias template"],
+        ["/english-aliases.feature", 14, "Original scenario"],
+        ["/english-aliases.feature", 11, "1: Alias template - entry: one"],
+        ["/english-aliases.feature", 12, "2: Alias template - entry: two"],
+      ]);
+    }
+  });
+  test("Docstring description fences retain exact real CodeLens identities and hide step payload syntax", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../../../src/test/fixtures/docstrings/descriptions.feature"), "utf8");
+    const lenses = featureParser.provideScenarioCodeLenses(source, "/descriptions.feature");
+    for (const command of ["behaveTestRunner.runScenario", "behaveTestRunner.debugScenario"]) {
+      const targets = lenses.filter((lens) => lens.command?.command === command);
+      assert.deepStrictEqual(targets.map((lens) => lens.command?.arguments), [
+        ["/descriptions.feature", 15, "Read boundary payload"], ["/descriptions.feature", 37, "Following boundary scenario"],
+      ]);
+      assert.deepStrictEqual(targets.map((lens) => [lens.range.start.line, lens.range.end.line]), [[14, 35], [36, 38]]);
+    }
+    assert.deepStrictEqual(lenses.filter((lens) => lens.command?.command === "behaveTestRunner.runFeatureFileWithTags")
+      .map((lens) => lens.command?.arguments?.[1]), ["@after", "@real"]);
+  });
+
+  test("Docstring boundaries keep real CodeLens targets, tag filters and full scenario ranges", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../../../src/test/fixtures/docstrings/boundaries.feature"), "utf8");
+    const lenses = featureParser.provideScenarioCodeLenses(source, "/boundaries.feature");
+    const commands = (command: string) => lenses.filter((lens) => lens.command?.command === command);
+    for (const command of ["behaveTestRunner.runScenario", "behaveTestRunner.debugScenario"]) {
+      assert.deepStrictEqual(commands(command).map((lens) => lens.command?.arguments?.[1]), [11, 26, 41, 37, 38]);
+      const first = commands(command)[0]!;
+      assert.strictEqual(first.range.start.line, 10);
+      assert.strictEqual(first.range.end.line, 24, "Docstring keywords do not truncate the real scenario's source range");
+    }
+    assert.deepStrictEqual(commands("behaveTestRunner.runFeatureFileWithTags").map((lens) => lens.command?.arguments?.[1]), ["@after", "@real"]);
+    assert.strictEqual(commands("behaveTestRunner.runFeatureFile").length, 1);
+  });
   test("Should generate CodeLenses for scenario outlines with examples", () => {
     const featureContent = `
 Feature: Calculator

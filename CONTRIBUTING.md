@@ -53,7 +53,7 @@ npm run compile
 npm run watch
 
 # Package for distribution
-npm run package
+npm run package:vsix
 ```
 
 ### Run Tests
@@ -71,6 +71,51 @@ npm run test:execution
 # Run with verbose output
 npm run test:verbose
 ```
+
+The native execution tests require real Python frameworks. The fixture baseline uses Behave 1.3.3, pytest 7.4.4, pytest-bdd 8.1.0, and debugpy 1.8.20. pytest-xdist 3.6.1 is a test dependency used to verify that distributed execution is rejected before any body runs. The populated native acceptance paths also passed with Behave 1.2.6. Install the pinned fixture versions before running the suite:
+
+```bash
+python3 -m pip install -r src/test/fixtures/execution/requirements.txt
+TEST_GREP='Execution selection acceptance' npm test
+
+# Exercise a different isolated Python environment
+BEHAVE_TEST_PYTHON='/path/to/venv/bin/python' TEST_GREP='Execution selection acceptance' npm test
+```
+
+Run the collection adapter's bounded Python checks and native acceptance on both supported metadata layouts. Keep the 8.1.0 baseline unchanged. For 9.0.0, create a separate environment using Python 3.10 or later:
+
+```bash
+python3.12 -m venv /tmp/behave-pytest9
+/tmp/behave-pytest9/bin/python -m pip install 'pytest==7.4.4' 'pytest-bdd==9.0.0' 'behave==1.3.3' 'debugpy==1.8.20' 'pytest-xdist==3.6.1'
+/tmp/behave-pytest9/bin/python -B src/test/python/collection_plugin_test.py
+BEHAVE_TEST_PYTHON=/tmp/behave-pytest9/bin/python TEST_GREP='Pytest collection identity acceptance' npm test
+```
+
+The baseline interpreter can run the same Python checks. `vsce ls` must include `python/behave_pytest_plugin.py` and exclude its bytecode; listing assets does not package, publish or change the version. The `pytestBddFilePattern` setting remains unused pending its own configuration contract; native pytest collection configuration governs Python modules.
+
+`TEST_GREP='Project context acceptance' npm test` exercises two real workspace folders with identical relative feature paths and scenario titles. Project A uses Behave and project B uses pytest-bdd, distinct configured command prefixes and relative working directories. Acceptance observes the actual project-B process invocation, project-specific step ledgers, delegated native TestRun outcomes and mixed Run All. Folder changes complete through workspace events. A removal-after-capture regression retains B's target outside its cwd and native outcome while rejecting later requests. Framework detection is also exercised with every explicit override absent. Preserve the first workspace folder when adding temporary roots so the native extension host stays alive.
+
+The command palette displays pytest native output in the Behave Test Runner output channel from the single captured execution, including stderr. The shipped Python plugin selects actual collected bindings and reports physical Gherkin row locations without inferring Python names or parsing parameter IDs.
+
+Shutdown regressions use controlled child events, debug events, and acknowledgement timers. An unconfirmed termination must end the user operation with an error, block new admission, and retain observers and reports until termination is confirmed. A parent close after a failed Windows tree stop is insufficient confirmation. Cancellation acceptance preserves a completed result, skips running and unstarted selections, and confirms descendant absence before the native TestRun ends. Parallel acceptance calls the public command with real workers and asserts its failure message. Primary report acceptance covers both frameworks through capture, parsing, and the real output channel at DEBUG level. A real failed Behave report is also replayed through native TestRun methods with two tag aliases: streamed output and every report-derived message share one 1 MiB payload budget. One operation truncation notice and fixed per-item status summaries are bounded control text outside that payload budget.
+
+These tests run Behave and pytest-bdd against temporary populated projects, assert append-only step ledgers and native TestItem outcomes, and fail when Python dependencies are missing. The debug acceptance test calls the production provider, runs the real debugpy adapter from a test extension, asserts a breakpoint at the selected step source and line, cancels the matching native session, and retries. This validates execution ownership and Python debugging; integration with the installed Microsoft Python extension remains a manual check. Collection acceptance covers arbitrary binding names, repeated Examples values, extra parameters and separate Python bindings, real mixed row outcomes, unique and ambiguous name selection, lexical symlink workspace paths, nested pytest configuration, marker filtering, dry runs and non-BDD suite tests. A real xdist command is rejected before any body runs. Its selected-row breakpoint evaluates the actual parameter value in the paused Python frame.
+
+The native runner uses pinned VS Code 1.142.0 and creates a temporary populated workspace, user profile, and extension directory for each run. It activates the built extension and waits for Mocha completion. `npm test` builds the extension before launching the trusted host, then launches a separate restricted host and asserts populated discovery with no execution or generated workspace files. The restricted pass uses the native executable directly because test-electron forces workspace trust off. Focused `TEST_GREP` runs use the trusted host; run `TEST_WORKSPACE_TRUST=untrusted npm run test:fast` for the restricted pass.
+
+```bash
+# Focus a suite through the same runner
+TEST_GREP='Foundation lifecycle acceptance' npm test
+
+# Exercise the minimum version declared in package.json
+VSCODE_VERSION=minimum npm test
+
+# Choose another host version or an existing executable
+VSCODE_VERSION=1.124.0 npm test
+VSCODE_EXECUTABLE_PATH='/path/to/code' npm test
+```
+
+The version pin makes the baseline repeatable; update it deliberately when validating a newer host. On macOS the runner supports both `Electron` and `Code` archive executable names. It clears inherited Electron Node mode and the old activation bypass before starting the host. The temporary workspace and profile are removed after host exit.
 
 ### Linting and Code Quality
 
@@ -260,14 +305,16 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ### Release Steps
 
-1. Ensure all tests pass
-2. Update version in `package.json`
-3. Update `CHANGELOG.md`
-4. Create a release tag
-5. Build and package the extension
-6. Publish to VS Code Marketplace
+1. Ensure all tests and `npm run test:release` pass.
+2. Run one explicit `npm run release:patch`, `release:minor`, or `release:major` command. `commit-and-tag-version` updates `package.json`, both lockfile versions and the changelog, then creates the release commit and `v<version>` tag.
+3. Review and push that commit and tag when the release is authorized.
+4. The tag workflow checks the version before building, creates and validates one VSIX, and uploads that same artifact to GitHub and the Marketplace. A missing `VSCE_PAT` skips Marketplace publication; invalid or missing artifacts fail.
 
 ### Automated Versioning
+
+The explicit release commands are the only version owner. `npm run package` builds the production bundle, and `npm run package:vsix` builds and verifies `dist/behave-test-runner-<version>.vsix` without changing tracked versions or creating a commit or tag. The pinned local `@vscode/vsce` is installed by `npm ci`; no global tool is needed. `npm run verify:vsix` checks an existing archive against the current manifest, bundle and Python plugin. Source maps, source, tests and bytecode are excluded.
+
+`npm run test:release` builds the same version twice, reads the real ZIP metadata and runtime assets, and tests rejection and retry without publishing. Local artifact checks do not establish installed-extension or cross-platform acceptance.
 
 The project uses `commit-and-tag-version` for automated versioning:
 

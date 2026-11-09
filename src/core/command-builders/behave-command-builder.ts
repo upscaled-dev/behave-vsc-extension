@@ -1,214 +1,85 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import { CommandBuilder } from "./command-builder-interface";
 import { TestExecutionOptions, FeatureExecutionOptions } from "../../types";
 import { ExtensionConfig } from "../extension-config";
-import { escapeBehaveNameArg, escapeBehaveNameRegex } from "../../utils/behave-name-escape";
+import { CommandInvocation, InvocationContext, commandInvocation, debugPython, invocationContext, pythonPluginEnvironment } from "../command-invocation";
+import { escapeBehaveNameRegex } from "../../utils/behave-name-escape";
 import { isScenarioOutlineExampleName, extractOutlineName } from "../../utils/scenario-outline";
-import * as fs from "fs";
+import { resolveGherkinKeywords, scenarioKeyword } from "../../utils/gherkin-keywords";
+import { FeatureParser } from "../../parsers/feature-parser";
 
-/**
- * Behave Command Builder (Behave Adapter)
- * 
- * This class implements the CommandBuilder interface for the behave framework.
- * It extracts the command building logic from TestExecutor to provide a clean
- * separation between framework-specific command syntax and the core execution logic.
- */
 export class BehaveCommandBuilder implements CommandBuilder {
-  constructor(private config: ExtensionConfig) {}
+  constructor(private readonly config: ExtensionConfig) {}
 
-  /**
-   * Build a command to run a specific scenario using behave syntax
-   */
-  public async buildScenarioCommand(options: TestExecutionOptions): Promise<string> {
-    const { filePath, lineNumber, scenarioName, tags, outputFormat, dryRun } = options;
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-
-    // Check if this is a scenario outline example
-    const isScenarioOutlineExample = isScenarioOutlineExampleName(scenarioName);
-
-    // If scenarioName is a scenario outline (not an example), run all examples in one command
-    if (
-      scenarioName &&
-      !isScenarioOutlineExample &&
-      filePath &&
-      fs.existsSync(filePath)
-    ) {
-      // Run a single command with --name="<outline name>"
-      let command = `${behaveCommand} "${filePath}" --name="${escapeBehaveNameArg(scenarioName)}"`;
-      
-      // Add tags
-      if (tags) {
-        command += ` --tags="${tags}" --no-skipped`;
-      } else if (this.config.tags) {
-        command += ` --tags="${this.config.tags}" --no-skipped`;
-      }
-      
-      // Add output format
-      const format = outputFormat ?? this.config.outputFormat;
-      if (format && format !== "pretty") {
-        command += ` --format=${format}`;
-      }
-      
-      // Add dry run option
-      if (dryRun || this.config.dryRun) {
-        command += " --dry-run";
-      }
-      
-      return command;
+  private targetLocations({ filePath, lineNumber }: TestExecutionOptions, cwd: string): string[] {
+    if (!filePath) {return [];}
+    if (!lineNumber) {return [filePath];}
+    const target = `${filePath}:${lineNumber}`;
+    let content: string;
+    try {content = fs.readFileSync(path.resolve(cwd, filePath), "utf8");} catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {return [target];}
+      throw error;
     }
+    if (!scenarioKeyword(content.split("\n")[lineNumber - 1]?.trim() ?? "", resolveGherkinKeywords(content))?.isOutline) {return [target];}
 
-    // Build command for individual scenario or scenario outline example
-    let command = `${behaveCommand} "${filePath}${lineNumber ? `:${lineNumber}` : ""}"`;
-
-    if (scenarioName) {
-      // For scenario outline examples, we need to use the original outline name
-      if (isScenarioOutlineExample) {
-        const originalOutlineName = extractOutlineName(scenarioName);
-        command += ` --name="${escapeBehaveNameArg(originalOutlineName)}"`;
-      } else {
-        command += ` --name="${escapeBehaveNameArg(scenarioName)}"`;
-      }
+    // Older Behave selects the preceding scenario for an outline heading. Rows are exact on both versions.
+    const feature = FeatureParser.create().parseFeatureContent(content);
+    if (!feature) {throw new Error(`Cannot resolve Examples rows for ${target}.`);}
+    const rows = feature.scenarios.filter((scenario) => scenario.outlineLineNumber === lineNumber);
+    if (rows.length > 0) {return rows.map((scenario) => `${filePath}:${scenario.lineNumber}`);}
+    if (feature.scenarios.some((scenario) => scenario.isScenarioOutline && scenario.lineNumber === lineNumber)) {
+      throw new Error(`Scenario outline at ${target} has no executable Examples rows.`);
     }
-
-    // Add tags if specified
-    if (tags) {
-      command += ` --tags="${tags}" --no-skipped`;
-    } else if (this.config.tags) {
-      command += ` --tags="${this.config.tags}" --no-skipped`;
-    }
-
-    // Add output format
-    const format = outputFormat ?? this.config.outputFormat;
-    if (format && format !== "pretty") {
-      command += ` --format=${format}`;
-    }
-
-    // Add dry run option
-    if (dryRun || this.config.dryRun) {
-      command += " --dry-run";
-    }
-
-    return command;
+    return [target];
   }
 
-  /**
-   * Build a command to run an entire feature file using behave syntax
-   */
-  public async buildFeatureCommand(options: FeatureExecutionOptions): Promise<string> {
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    let command = `${behaveCommand} "${options.filePath}"`;
-
-    // Add tags if specified
-    if (options.tags) {
-      command += ` --tags="${options.tags}" --no-skipped`;
+  private args(options: TestExecutionOptions, cwd: string, captureOutput = false): string[] {
+    const format = ExtensionConfig.resolveBehaveOutputFormat(options.outputFormat, this.config.outputFormat);
+    const args = this.targetLocations(options, cwd);
+    if (options.scenarioName && !options.lineNumber) {
+      const name = isScenarioOutlineExampleName(options.scenarioName) ? extractOutlineName(options.scenarioName) : options.scenarioName;
+      args.push("--name", escapeBehaveNameRegex(name));
     }
-
-    // Add output format
-    const outputFormat = options.outputFormat ?? this.config.outputFormat;
-    if (outputFormat && outputFormat !== "pretty") {
-      command += ` --format=${outputFormat}`;
-    }
-
-    // Add dry run option
-    if (options.dryRun || this.config.dryRun) {
-      command += " --dry-run";
-    }
-
-    return command;
+    const tags = options.tags ?? this.config.tags;
+    if (tags) {args.push("--tags", tags, "--no-skipped");}
+    if (options.dryRun || this.config.dryRun) {args.push("--dry-run");}
+    const visible = format === "junit" ? "pretty" : format;
+    args.push("-f", captureOutput ? "behave_capture:CaptureFormatter" : visible);
+    if (captureOutput) {args.push("-D", `btr_format=${visible}`);}
+    if (format === "junit") {args.push("--junit");}
+    return args;
   }
 
-  /**
-   * Build a command to run tests with specific tags using behave syntax
-   */
-  public async buildTagCommand(tag: string): Promise<string> {
-    const behaveCommand = await this.config.getIntelligentBehaveCommand();
-    return `${behaveCommand} --tags="${tag}" --no-skipped`;
+  public async buildScenarioCommand(options: TestExecutionOptions, context?: InvocationContext): Promise<CommandInvocation> {
+    const resolved = context ?? invocationContext(undefined, this.config.workingDirectory);
+    const args = this.args(options, resolved.cwd, resolved.captureOutput);
+    const prefix = commandInvocation(await this.config.getIntelligentBehaveCommand(resolved), resolved.cwd);
+    return { ...prefix, args: [...prefix.args, ...args],
+      ...(resolved.captureOutput ? { env: pythonPluginEnvironment("behave_capture.py") } : {}) };
   }
-
-  /**
-   * Build a command to run the entire suite using behave syntax
-   */
-  public async buildRunAllCommand(): Promise<string> {
-    let command = await this.config.getIntelligentBehaveCommand();
-    if (this.config.tags) {
-      command += ` --tags="${this.config.tags}" --no-skipped`;
-    }
-    const format = this.config.outputFormat;
-    if (format && format !== "pretty") {
-      command += ` --format=${format}`;
-    }
-    if (this.config.dryRun) {
-      command += " --dry-run";
-    }
-    return command;
+  public buildFeatureCommand(options: FeatureExecutionOptions, context?: InvocationContext): Promise<CommandInvocation> {
+    return this.buildScenarioCommand(options, context);
   }
-
-  /**
-   * Build a command to debug a specific scenario using behave syntax
-   * For behave, debug mode uses --no-capture to show print statements
-   */
-  public async buildDebugCommand(options: TestExecutionOptions): Promise<string> {
-    const baseCommand = await this.buildScenarioCommand(options);
-    return `${baseCommand} --no-capture`;
+  public buildTagCommand(tag: string, context?: InvocationContext): Promise<CommandInvocation> {
+    return this.buildScenarioCommand({ filePath: "", tags: tag }, context);
   }
-
-  /**
-   * Build a VSCode debug configuration that launches behave under the Python
-   * debugger so breakpoints are honored. `cwd` is intentionally omitted and
-   * injected by the caller (TestExecutor).
-   */
-  public buildDebugConfiguration(options: TestExecutionOptions): Promise<vscode.DebugConfiguration> {
-    const { filePath, lineNumber, scenarioName } = options;
-    if (!filePath || filePath.trim() === "") {
-      throw new Error("File path is required for debugging");
-    }
-
-    const isExample = isScenarioOutlineExampleName(scenarioName);
-    const isOutlineRun = Boolean(scenarioName) && !isExample && fs.existsSync(filePath);
-
-    const args: string[] = isOutlineRun
-      ? [filePath, "--name", escapeBehaveNameRegex(scenarioName as string)]
-      : [`${filePath}${lineNumber ? `:${lineNumber}` : ""}`];
-
-    if (!isOutlineRun && scenarioName) {
-      args.push(
-        "--name",
-        escapeBehaveNameRegex(isExample ? extractOutlineName(scenarioName) : scenarioName)
-      );
-    }
-
-    // Show print/stdout while debugging (behave captures it by default).
-    args.push("--no-capture");
-
-    return Promise.resolve({
-      name: `Debug: ${scenarioName ?? "Test Scenario"}`,
-      type: "debugpy",
-      request: "launch",
-      module: "behave",
-      args,
-      console: "integratedTerminal",
-      justMyCode: false,
-    });
+  public buildRunAllCommand(context?: InvocationContext): Promise<CommandInvocation> {
+    return this.buildScenarioCommand({ filePath: "" }, context);
   }
-
-  /**
-   * Validate that behave is properly installed and available
-   */
-  public validateInstallation(): boolean {
-    try {
-      // This is a simplified validation - in a real implementation,
-      // you would execute 'behave --version' or similar
-      return true;
-    } catch {
-      return false;
-    }
+  public async buildDebugCommand(options: TestExecutionOptions, context?: InvocationContext): Promise<CommandInvocation> {
+    const invocation = await this.buildScenarioCommand(options, context);
+    return { ...invocation, args: [...invocation.args, "--no-capture"] };
   }
-
-  /**
-   * Get the framework name
-   */
-  public getFrameworkName(): string {
-    return "behave";
+  public buildDebugConfiguration(options: TestExecutionOptions, context?: InvocationContext): Promise<vscode.DebugConfiguration> {
+    if (!options.filePath.trim()) {throw new Error("File path is required for debugging");}
+    const cwd = context?.cwd ?? invocationContext(undefined, this.config.workingDirectory).cwd;
+    const python = debugPython(commandInvocation(this.config.behaveCommand, cwd), "behave");
+    return Promise.resolve({ name: `Debug: ${options.scenarioName ?? "Feature"}`, type: "debugpy", request: "launch",
+      module: "behave", args: [...this.args(options, cwd), "--no-capture"], cwd,
+      ...(python ? { python } : {}), console: "integratedTerminal", justMyCode: false });
   }
-
+  public validateInstallation(): boolean {return true;}
+  public getFrameworkName(): string {return "behave";}
 }

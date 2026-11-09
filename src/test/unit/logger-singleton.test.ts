@@ -1,6 +1,6 @@
 import * as assert from "assert";
-import * as vscode from "vscode";
 import { Logger } from "../../utils/logger.js";
+import { createCheckedOutputChannel } from "../output-channel";
 
 suite("Logger Singleton Tests", () => {
   test("Logger.create() without parameters should return singleton instance", () => {
@@ -17,7 +17,7 @@ suite("Logger Singleton Tests", () => {
 
   test("Logger.create() with parameters should return new instances", () => {
     // Create logger instances with parameters (for testing)
-    const testOutputChannel = vscode.window.createOutputChannel("Test Logger");
+    const testOutputChannel = createCheckedOutputChannel("Test Logger");
     const logger1 = Logger.create(testOutputChannel);
     const logger2 = Logger.create(testOutputChannel);
     
@@ -78,4 +78,4 @@ suite("Logger Singleton Tests", () => {
     // Restore original method
     logger1["outputChannel"].appendLine = originalAppendLine;
   });
-}); 
+});

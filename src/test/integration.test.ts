@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import * as fs from "fs";
+import { afterOutput } from "./output-channel";
 
 // Remove console statements or replace with proper logging
  
@@ -137,18 +138,20 @@ suite("Integration Test Suite", () => {
     );
   });
 
-  test("Should create output channel", () => {
+  test("Should create output channel", async () => {
     // Test that we can create an output channel
     const outputChannel =
       vscode.window.createOutputChannel("Behave Test Runner");
     assert.ok(outputChannel, "Should be able to create output channel");
 
     // Test that we can write to it
-    outputChannel.appendLine("Test output");
-    outputChannel.show();
-
-    // Clean up
-    outputChannel.dispose();
+    try {
+      const text = await afterOutput(outputChannel, (value) => value.includes("Native integration output is visible"), () => {
+        outputChannel.appendLine("Native integration output is visible");
+        outputChannel.show();
+      });
+      assert.ok(text.includes("Native integration output is visible"));
+    } finally {outputChannel.dispose();}
   });
 
   test("Should handle file system operations", async () => {

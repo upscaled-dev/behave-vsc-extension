@@ -1,0 +1,9 @@
+{
+  "name": "behave-installed-acceptance-driver",
+  "displayName": "Behave installed acceptance driver",
+  "publisher": "local-acceptance",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.99.0" },
+  "activationEvents": ["*"],
+  "main": "./extension.cjs"
+}

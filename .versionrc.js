@@ -1,4 +1,4 @@
-export default {
+module.exports = {
   types: [
     { type: 'feat', section: '✨ Features' },
     { type: 'fix', section: '🐛 Bug Fixes' },
@@ -14,9 +14,9 @@ export default {
   ],
   releaseCommitMessageFormat: 'chore(release): 📦 {{currentTag}}',
   issuePrefixes: ['#'],
-  commitUrlFormat: 'https://github.com/your-username/behave-test-runner/commit/{{hash}}',
-  compareUrlFormat: 'https://github.com/your-username/behave-test-runner/compare/{{previousTag}}...{{currentTag}}',
-  issueUrlFormat: 'https://github.com/your-username/behave-test-runner/issues/{{id}}',
+  commitUrlFormat: 'https://github.com/upscaled-dev/behave-vsc-extension/commit/{{hash}}',
+  compareUrlFormat: 'https://github.com/upscaled-dev/behave-vsc-extension/compare/{{previousTag}}...{{currentTag}}',
+  issueUrlFormat: 'https://github.com/upscaled-dev/behave-vsc-extension/issues/{{id}}',
   userUrlFormat: 'https://github.com/{{user}}',
   releaseRules: [
     { type: 'feat', release: 'minor' },

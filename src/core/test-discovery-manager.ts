@@ -9,11 +9,9 @@ export class TestDiscoveryManager {
   private readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_CACHE_SIZE = 100; // Maximum number of cache entries
   private logger: Logger;
-  private config: ExtensionConfig;
 
-  constructor(logger?: Logger, config?: ExtensionConfig) {
+  constructor(logger?: Logger, _config?: ExtensionConfig) {
     this.logger = logger ?? Logger.getInstance();
-    this.config = config ?? ExtensionConfig.getInstance();
   }
 
   public static create(logger?: Logger, config?: ExtensionConfig): TestDiscoveryManager {
@@ -33,15 +31,21 @@ export class TestDiscoveryManager {
    * Discover test files with intelligent caching
    */
   public async discoverTestFiles(
-    options: DiscoveryOptions = {}
+    options: DiscoveryOptions = {}, token?: vscode.CancellationToken
   ): Promise<string[]> {
+    if (token?.isCancellationRequested) {return [];}
     const {
-      pattern = this.config.testFilePattern,
+      pattern,
       maxCacheAge = this.DEFAULT_CACHE_TTL,
       forceRefresh = false,
     } = options;
 
-    const cacheKey = `discovery:${pattern}`;
+    const searches = (vscode.workspace.workspaceFolders ?? []).map((folder) => ({ folder,
+      pattern: pattern ?? ExtensionConfig.forResource(folder.uri).testFilePattern }));
+    for (const search of searches) {
+      if (!search.pattern.trim()) {throw new Error(`Test file pattern is empty for project '${search.folder.name}'.`);}
+    }
+    const cacheKey = JSON.stringify(searches.map(({ folder, pattern: selected }) => [folder.uri.toString(), selected]));
 
     try {
       // Check cache first (unless force refresh is requested)
@@ -59,8 +63,14 @@ export class TestDiscoveryManager {
 
       this.logger.info("Discovering test files", { pattern, forceRefresh });
 
-      // Perform file discovery
-      const files = await this.discoverFiles(pattern);
+      // Drain every admitted root before reporting failure so no search outlives its logger.
+      const results = await Promise.allSettled(searches.map(({ folder, pattern: selected }) => this.discoverFiles(selected, folder, token)));
+      if (token?.isCancellationRequested) {return [];}
+      const files: string[] = [];
+      for (const result of results) {
+        if (result.status === "rejected") {throw result.reason;}
+        files.push(...result.value);
+      }
 
       // Cache the results
       this.cache.set(cacheKey, {
@@ -78,6 +88,7 @@ export class TestDiscoveryManager {
 
       return files;
     } catch (error) {
+      if (token?.isCancellationRequested) {return [];}
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       this.logger.error("Failed to discover test files", {
@@ -91,7 +102,7 @@ export class TestDiscoveryManager {
   /**
    * Discover files using VS Code workspace API
    */
-  private async discoverFiles(pattern: string): Promise<string[]> {
+  private async discoverFiles(pattern: string, selected: vscode.WorkspaceFolder, token?: vscode.CancellationToken): Promise<string[]> {
     try {
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -101,18 +112,20 @@ export class TestDiscoveryManager {
 
       const files: string[] = [];
 
-      for (const folder of workspaceFolders) {
+      for (const folder of [selected]) {
         const relativePattern = new vscode.RelativePattern(folder, pattern);
         const foundFiles = await vscode.workspace.findFiles(
           relativePattern,
-          "**/node_modules/**"
+          "**/node_modules/**", undefined, token
         );
+        if (token?.isCancellationRequested) {return [];}
 
-        files.push(...foundFiles.map((file) => file.fsPath));
+        files.push(...foundFiles.filter((file) => vscode.workspace.getWorkspaceFolder(file)?.uri.toString() === folder.uri.toString()).map((file) => file.fsPath));
       }
 
       return files;
     } catch (error) {
+      if (token?.isCancellationRequested) {return [];}
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       this.logger.error("Failed to discover files", {
@@ -207,17 +220,8 @@ export class TestDiscoveryManager {
    * Force refresh of cached data
    */
   public async refreshCache(pattern?: string): Promise<void> {
-    const patterns = pattern
-      ? [pattern]
-      : Array.from(this.cache.keys()).map((key) =>
-          key.replace("discovery:", "")
-        );
-
-    for (const p of patterns) {
-      await this.discoverTestFiles({ pattern: p, forceRefresh: true });
-    }
-
-    this.logger.info("Cache refresh completed", { patterns });
+    this.clearCache();
+    await this.discoverTestFiles({ ...(pattern ? { pattern } : {}), forceRefresh: true });
   }
 
   /**

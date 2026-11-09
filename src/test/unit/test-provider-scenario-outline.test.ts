@@ -3,18 +3,24 @@ import * as vscode from "vscode";
 import { BehaveTestProvider } from "../../test-providers/behave-test-provider";
 import { FeatureBasedOrganization, FlatOrganization, TagBasedOrganization } from "../../core/test-organization";
 import { Scenario } from "../../types";
+import { createCheckedOutputChannel } from "../output-channel";
 
 suite("Test Provider Scenario Outline Parent-Child Tests", () => {
   let testController: vscode.TestController;
   let testProvider: BehaveTestProvider;
+  let createOutputChannel: typeof vscode.window.createOutputChannel;
 
   setup(() => {
+    createOutputChannel = vscode.window.createOutputChannel;
+    vscode.window.createOutputChannel = createCheckedOutputChannel as typeof vscode.window.createOutputChannel;
     testController = vscode.tests.createTestController("test", "Test");
     testProvider = new BehaveTestProvider(testController);
   });
 
   teardown(() => {
+    testProvider.dispose();
     testController.dispose();
+    vscode.window.createOutputChannel = createOutputChannel;
   });
 
   test("Should store parent-child relationships in hierarchy view", () => {
@@ -150,7 +156,6 @@ suite("Test Provider Scenario Outline Parent-Child Tests", () => {
 
   test("Should extract feature file path correctly from test ID", () => {
     // Arrange
-    const testProvider = new BehaveTestProvider(testController);
     
     // Act & Assert
     assert.strictEqual((testProvider as any).extractFeatureFileFromTestId("/test/features/test.feature:39"), "/test/features/test.feature");
@@ -255,8 +260,11 @@ suite("Test Provider Scenario Outline Parent-Child Tests", () => {
       assert.ok(scenarioOutlineItem.label.includes('Scenario Outline'), 'Should be a scenario outline');
       assert.ok(scenarioOutlineItem.children.size > 0, 'Should have example children');
       
-      // Check that the examples are correctly named and have the expected format
-      const exampleNames = Array.from(scenarioOutlineItem.children).map(([, child]) => child.label);
+      // Examples may be nested beneath distinct named or unnamed block containers.
+      const leafNames = (item: vscode.TestItem): string[] => item.children.size
+        ? Array.from(item.children, ([, child]) => leafNames(child)).flat()
+        : [item.label];
+      const exampleNames = leafNames(scenarioOutlineItem);
       assert.ok(exampleNames.length > 0, 'Should have example names');
       
       // Verify that examples follow the expected naming pattern (number: scenario name - parameters)

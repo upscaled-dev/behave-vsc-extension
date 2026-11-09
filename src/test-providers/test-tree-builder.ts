@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Scenario, TestGroup, BehaveExtensionContext } from "../types";
+import { Scenario, ParsedFeature, TestGroup, BehaveExtensionContext } from "../types";
 import { extractOutlineName } from "../utils/scenario-outline";
 
 function errMsg(error: unknown): string {
@@ -15,6 +15,15 @@ function errMsg(error: unknown): string {
  * run/status logic keeps working against the same state.
  */
 export class TestTreeBuilder {
+  private readonly scenarios = new Map<string, Scenario>();
+
+  public scenarioSnapshot(): ReadonlyMap<string, Scenario> {
+    return new Map(this.scenarios);
+  }
+
+  public scenarioFor(id: string): Scenario | undefined {
+    return this.scenarios.get(id);
+  }
   constructor(
     private readonly testController: vscode.TestController,
     private readonly context: BehaveExtensionContext,
@@ -26,20 +35,11 @@ export class TestTreeBuilder {
    * Discover all feature files and rebuild the test tree. Throws on discovery
    * failure; per-file parse errors are logged and skipped.
    */
-  public async discoverTests(): Promise<void> {
-    const pattern = this.context.config.testFilePattern;
+  public async discoverTests(isCurrent: () => boolean = () => true, token?: vscode.CancellationToken): Promise<void> {
+    const filePaths = await this.context.discoveryManager.discoverTestFiles({ forceRefresh: true }, token);
 
-    if (!pattern || pattern.trim() === "") {
-      throw new Error("Test file pattern is empty or invalid");
-    }
-
-    const filePaths = await this.context.discoveryManager.discoverTestFiles({
-      pattern,
-      forceRefresh: true,
-    });
-
-    this.testController.items.replace([]);
-    this.discoveredTests.clear();
+    if (!isCurrent()) {return;}
+    const features = new Map<string, ParsedFeature>();
 
     // First pass: collect all scenarios from all feature files
     const allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }> = [];
@@ -48,10 +48,12 @@ export class TestTreeBuilder {
       try {
         const file = vscode.Uri.file(filePath);
         const content = await vscode.workspace.fs.readFile(file);
+        if (!isCurrent()) {return;}
         const text = new TextDecoder().decode(content);
         const parsed = this.context.featureParser.parseFeatureContent(text);
 
         if (parsed) {
+          features.set(filePath, parsed);
           for (const scenario of parsed.scenarios) {
             scenario.filePath = file.fsPath;
           }
@@ -60,11 +62,18 @@ export class TestTreeBuilder {
           );
         }
       } catch (fileError) {
+        if (!isCurrent()) {return;}
         this.context.logger.error(
           `Failed to process feature file ${filePath}: ${errMsg(fileError)}`
         );
       }
     }
+
+    if (!isCurrent()) {return;}
+    this.testController.items.replace([]);
+    this.discoveredTests.clear();
+    this.scenarioOutlineParents.clear();
+    this.scenarios.clear();
 
     // Second pass: organize all scenarios using the current strategy
     const allScenarioObjects = allScenarios.map((item) => item.scenario);
@@ -76,22 +85,22 @@ export class TestTreeBuilder {
     if (strategyType === "TagBasedOrganization") {
       this.createTagBasedTestHierarchy(organizedGroups, allScenarios);
     } else if (strategyType === "FeatureBasedOrganization") {
-      await this.createHierarchicalFeatureBasedTestHierarchy(
-        organizedGroups,
-        allScenarios
-      );
+      for (const [filePath, parsed] of features) {
+        this.addParsedFeature(vscode.Uri.file(filePath), parsed);
+      }
     } else {
-      await this.createFeatureBasedTestHierarchy(organizedGroups, allScenarios);
+      this.createFeatureBasedTestHierarchy(organizedGroups, allScenarios);
     }
   }
 
-  public async addFeatureFileToTestController(file: vscode.Uri): Promise<void> {
+  public async addFeatureFileToTestController(file: vscode.Uri, isCurrent: () => boolean = () => true): Promise<void> {
     try {
       if (!file?.fsPath) {
         throw new Error("Invalid file URI provided");
       }
 
       const content = await vscode.workspace.fs.readFile(file);
+      if (!isCurrent()) {return;}
       const text = new TextDecoder().decode(content);
       const parsed = this.context.featureParser.parseFeatureContent(text);
 
@@ -100,38 +109,46 @@ export class TestTreeBuilder {
         return;
       }
 
-      const featureItem = this.testController.createTestItem(
-        file.fsPath,
-        parsed.feature,
-        file
-      );
-
-      featureItem.canResolveChildren = true;
-
-      if (parsed.featureLineNumber && parsed.featureLineNumber > 0) {
-        featureItem.range = new vscode.Range(
-          parsed.featureLineNumber - 1,
-          0,
-          parsed.featureLineNumber - 1,
-          0
-        );
+      if (isCurrent()) {
+        for (const scenario of parsed.scenarios) {scenario.filePath = file.fsPath;}
+        this.addParsedFeature(file, parsed);
       }
-
-      const scenarioGroups = this.groupScenariosByOutline(parsed.scenarios);
-
-      for (const [outlineName, scenarios] of scenarioGroups) {
-        this.addScenarioGroupToFeature(featureItem, file, outlineName, scenarios);
-      }
-
-      this.testController.items.add(featureItem);
-      this.discoveredTests.set(file.fsPath, featureItem);
     } catch (error) {
+      if (!isCurrent()) {return;}
       this.context.logger.error(
         `Failed to add feature file to test controller: ${errMsg(error)}`,
         { filePath: file.fsPath }
       );
       throw error;
     }
+  }
+
+  private addParsedFeature(file: vscode.Uri, parsed: ParsedFeature): void {
+    const featureItem = this.testController.createTestItem(
+      file.fsPath,
+      parsed.feature,
+      file
+    );
+
+    featureItem.canResolveChildren = true;
+
+    if (parsed.featureLineNumber && parsed.featureLineNumber > 0) {
+      featureItem.range = new vscode.Range(
+        parsed.featureLineNumber - 1,
+        0,
+        parsed.featureLineNumber - 1,
+        0
+      );
+    }
+
+    const scenarioGroups = this.groupScenariosByOutline(parsed.scenarios);
+
+    for (const scenarios of scenarioGroups.values()) {
+      this.addScenarioGroupToFeature(featureItem, file, scenarios);
+    }
+
+    this.testController.items.add(featureItem);
+    this.discoveredTests.set(file.fsPath, featureItem);
   }
 
   /**
@@ -142,18 +159,16 @@ export class TestTreeBuilder {
   private addScenarioGroupToFeature(
     featureItem: vscode.TestItem,
     file: vscode.Uri,
-    outlineName: string,
     scenarios: Scenario[]
   ): void {
-    const isMultiExampleOutline =
-      scenarios.length > 1 && scenarios[0]?.isScenarioOutline;
+    const first = scenarios[0];
 
-    if (isMultiExampleOutline && scenarios[0]?.outlineLineNumber && typeof scenarios[0].featureLineNumber === 'number') {
+    if (scenarios.length > 1 && first?.isScenarioOutline && first.outlineLineNumber && typeof first.featureLineNumber === 'number') {
       const outlineItem = this.createOutlineTestItem(
         file,
-        outlineName,
+        extractOutlineName(first.name),
         scenarios,
-        `${file.fsPath}:outline:${outlineName}`
+        `${file.fsPath}:outline:${first.outlineLineNumber}`
       );
       featureItem.children.add(outlineItem);
       return;
@@ -173,11 +188,10 @@ export class TestTreeBuilder {
 
     for (const scenario of scenarios) {
       if (scenario.isScenarioOutline) {
-        // Group examples under their original outline name
-        const outlineName = extractOutlineName(scenario.name);
-        const group = groups.get(outlineName) ?? [];
+        const key = `${scenario.filePath}:outline:${scenario.outlineLineNumber ?? scenario.lineNumber}`;
+        const group = groups.get(key) ?? [];
         group.push(scenario);
-        groups.set(outlineName, group);
+        groups.set(key, group);
       } else {
         // Regular scenario - use file path and line number for uniqueness
         const groupKey = `${scenario.filePath}:${scenario.lineNumber}`;
@@ -214,15 +228,15 @@ export class TestTreeBuilder {
       outlineItem.range = undefined;
     }
 
-    const blockGroups = new Map<string, Scenario[]>();
+    const blockGroups = new Map<number | string, Scenario[]>();
     for (const example of examples) {
-      const key = example.examplesBlockName ?? "";
+      const key = example.examplesBlockLineNumber ?? example.examplesBlockName ?? "";
       const list = blockGroups.get(key) ?? [];
       list.push(example);
       blockGroups.set(key, list);
     }
 
-    const hasNamedBlock = Array.from(blockGroups.keys()).some((k) => k !== "");
+    const hasNamedBlock = Array.from(blockGroups.values()).some((block) => Boolean(block[0]?.examplesBlockName));
     const useBlockHierarchy = blockGroups.size > 1 || hasNamedBlock;
 
     if (!useBlockHierarchy) {
@@ -232,8 +246,8 @@ export class TestTreeBuilder {
       return outlineItem;
     }
 
-    for (const [blockName, blockExamples] of blockGroups) {
-      const blockItem = this.createExamplesBlockTestItem(file, blockName, blockExamples, testId);
+    for (const blockExamples of blockGroups.values()) {
+      const blockItem = this.createExamplesBlockTestItem(file, blockExamples[0]?.examplesBlockName ?? "", blockExamples, testId);
       outlineItem.children.add(blockItem);
     }
     return outlineItem;
@@ -288,6 +302,7 @@ export class TestTreeBuilder {
   ): vscode.TestItem {
     // Always use absolute file path and scenario.lineNumber for ID
     const id = `${scenario.filePath}:${scenario.lineNumber}`;
+    this.scenarios.set(id, scenario);
     const scenarioItem = this.testController.createTestItem(
       id,
       scenario.name,
@@ -351,10 +366,10 @@ export class TestTreeBuilder {
     }
   }
 
-  private async createFeatureBasedTestHierarchy(
+  private createFeatureBasedTestHierarchy(
     organizedGroups: TestGroup[],
     _allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }>
-  ): Promise<void> {
+  ): void {
     for (const group of organizedGroups) {
       if (group.scenarios.length > 0) {
         const groupItem = this.testController.createTestItem(
@@ -376,25 +391,6 @@ export class TestTreeBuilder {
 
         this.testController.items.add(groupItem);
       }
-    }
-
-    // Small delay to ensure UI updates properly
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  private async createHierarchicalFeatureBasedTestHierarchy(
-    _organizedGroups: TestGroup[],
-    allScenarios: Array<{ scenario: Scenario; file: vscode.Uri }>
-  ): Promise<void> {
-    // For FeatureBasedOrganization, feature files are root items with scenarios as children
-    const uniqueFeatureFiles = new Set<string>();
-    for (const { file } of allScenarios) {
-      uniqueFeatureFiles.add(file.fsPath);
-    }
-
-    for (const filePath of uniqueFeatureFiles) {
-      const file = vscode.Uri.file(filePath);
-      await this.addFeatureFileToTestController(file);
     }
   }
 }

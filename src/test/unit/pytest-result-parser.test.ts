@@ -1,5 +1,5 @@
 import { suite, test, setup } from 'mocha';
-import { assert } from 'chai';
+import * as assert from "assert";
 import { PytestResultParser } from '../../utils/pytest-result-parser';
 import { Logger } from '../../utils/logger';
 
@@ -27,22 +27,22 @@ tests/test_pytest_bdd_example.py::test_login_different_user_types[guest-guest_us
 
     const result = parser.parsePytestOutput(output);
 
-    assert.equal(result.summary.total, 3);
-    assert.equal(result.summary.passed, 3);
-    assert.equal(result.summary.failed, 0);
-    assert.equal(result.summary.skipped, 0);
-    assert.equal(result.summary.errors, 0);
+    assert.strictEqual(result.summary.total, 3);
+    assert.strictEqual(result.summary.passed, 3);
+    assert.strictEqual(result.summary.failed, 0);
+    assert.strictEqual(result.summary.skipped, 0);
+    assert.strictEqual(result.summary.errors, 0);
 
-    assert.equal(result.tests.length, 3);
-    assert.isDefined(result.tests[0]);
-    assert.equal(result.tests[0]!.name, 'test_login_different_user_types[admin-admin_user-admin_pass-Welcome Administrator]');
-    assert.equal(result.tests[0]!.status, 'passed');
-    assert.isDefined(result.tests[1]);
-    assert.equal(result.tests[1]!.name, 'test_login_different_user_types[regular-user123-user_pass-Welcome User]');
-    assert.equal(result.tests[1]!.status, 'passed');
-    assert.isDefined(result.tests[2]);
-    assert.equal(result.tests[2]!.name, 'test_login_different_user_types[guest-guest_user-guest_pass-Welcome Guest]');
-    assert.equal(result.tests[2]!.status, 'passed');
+    assert.strictEqual(result.tests.length, 3);
+    assert.notStrictEqual(result.tests[0], undefined);
+    assert.strictEqual(result.tests[0]!.name, 'test_login_different_user_types[admin-admin_user-admin_pass-Welcome Administrator]');
+    assert.strictEqual(result.tests[0]!.status, 'passed');
+    assert.notStrictEqual(result.tests[1], undefined);
+    assert.strictEqual(result.tests[1]!.name, 'test_login_different_user_types[regular-user123-user_pass-Welcome User]');
+    assert.strictEqual(result.tests[1]!.status, 'passed');
+    assert.notStrictEqual(result.tests[2], undefined);
+    assert.strictEqual(result.tests[2]!.name, 'test_login_different_user_types[guest-guest_user-guest_pass-Welcome Guest]');
+    assert.strictEqual(result.tests[2]!.status, 'passed');
   });
 
   test('Should parse pytest output with mixed results', () => {
@@ -61,32 +61,32 @@ tests/test_example.py::test_error ERROR [100%]
 
     const result = parser.parsePytestOutput(output);
 
-    assert.equal(result.summary.total, 4);
-    assert.equal(result.summary.passed, 1);
-    assert.equal(result.summary.failed, 1);
-    assert.equal(result.summary.skipped, 1);
-    assert.equal(result.summary.errors, 1);
+    assert.strictEqual(result.summary.total, 4);
+    assert.strictEqual(result.summary.passed, 1);
+    assert.strictEqual(result.summary.failed, 1);
+    assert.strictEqual(result.summary.skipped, 1);
+    assert.strictEqual(result.summary.errors, 1);
 
-    assert.equal(result.tests.length, 4);
-    assert.isDefined(result.tests[0]);
-    assert.equal(result.tests[0]!.status, 'passed');
-    assert.isDefined(result.tests[1]);
-    assert.equal(result.tests[1]!.status, 'failed');
-    assert.isDefined(result.tests[2]);
-    assert.equal(result.tests[2]!.status, 'skipped');
-    assert.isDefined(result.tests[3]);
-    assert.equal(result.tests[3]!.status, 'error');
+    assert.strictEqual(result.tests.length, 4);
+    assert.notStrictEqual(result.tests[0], undefined);
+    assert.strictEqual(result.tests[0]!.status, 'passed');
+    assert.notStrictEqual(result.tests[1], undefined);
+    assert.strictEqual(result.tests[1]!.status, 'failed');
+    assert.notStrictEqual(result.tests[2], undefined);
+    assert.strictEqual(result.tests[2]!.status, 'skipped');
+    assert.notStrictEqual(result.tests[3], undefined);
+    assert.strictEqual(result.tests[3]!.status, 'error');
   });
 
   test('Should handle empty output', () => {
     const result = parser.parsePytestOutput('');
     
-    assert.equal(result.summary.total, 0);
-    assert.equal(result.summary.passed, 0);
-    assert.equal(result.summary.failed, 0);
-    assert.equal(result.summary.skipped, 0);
-    assert.equal(result.summary.errors, 0);
-    assert.equal(result.tests.length, 0);
+    assert.strictEqual(result.summary.total, 0);
+    assert.strictEqual(result.summary.passed, 0);
+    assert.strictEqual(result.summary.failed, 0);
+    assert.strictEqual(result.summary.skipped, 0);
+    assert.strictEqual(result.summary.errors, 0);
+    assert.strictEqual(result.tests.length, 0);
   });
 
   test('Should handle output without test results', () => {
@@ -100,12 +100,12 @@ collected 0 items
 
     const result = parser.parsePytestOutput(output);
     
-    assert.equal(result.summary.total, 0);
-    assert.equal(result.summary.passed, 0);
-    assert.equal(result.summary.failed, 0);
-    assert.equal(result.summary.skipped, 0);
-    assert.equal(result.summary.errors, 0);
-    assert.equal(result.tests.length, 0);
+    assert.strictEqual(result.summary.total, 0);
+    assert.strictEqual(result.summary.passed, 0);
+    assert.strictEqual(result.summary.failed, 0);
+    assert.strictEqual(result.summary.skipped, 0);
+    assert.strictEqual(result.summary.errors, 0);
+    assert.strictEqual(result.tests.length, 0);
   });
 
   test('Should extract test duration when available', () => {
@@ -115,9 +115,9 @@ tests/test_example.py::test_slow PASSED [100%] 2.34s
 
     const result = parser.parsePytestOutput(output);
     
-    assert.equal(result.tests.length, 1);
-    assert.isDefined(result.tests[0]);
-    assert.equal(result.tests[0]!.duration, 2.34);
+    assert.strictEqual(result.tests.length, 1);
+    assert.notStrictEqual(result.tests[0], undefined);
+    assert.strictEqual(result.tests[0]!.duration, 2.34);
   });
 
   test('Should map pytest statuses correctly', () => {
@@ -130,20 +130,20 @@ tests/test_example.py::test_error ERROR [100%]
 
     const result = parser.parsePytestOutput(output);
     
-    assert.isDefined(result.tests[0]);
-    assert.equal(result.tests[0]!.status, 'passed');
-    assert.isDefined(result.tests[1]);
-    assert.equal(result.tests[1]!.status, 'failed');
-    assert.isDefined(result.tests[2]);
-    assert.equal(result.tests[2]!.status, 'skipped');
-    assert.isDefined(result.tests[3]);
-    assert.equal(result.tests[3]!.status, 'error');
+    assert.notStrictEqual(result.tests[0], undefined);
+    assert.strictEqual(result.tests[0]!.status, 'passed');
+    assert.notStrictEqual(result.tests[1], undefined);
+    assert.strictEqual(result.tests[1]!.status, 'failed');
+    assert.notStrictEqual(result.tests[2], undefined);
+    assert.strictEqual(result.tests[2]!.status, 'skipped');
+    assert.notStrictEqual(result.tests[3], undefined);
+    assert.strictEqual(result.tests[3]!.status, 'error');
   });
 
   test('Should get status from exit code', () => {
-    assert.equal(parser.getStatusFromExitCode(0), 'passed');
-    assert.equal(parser.getStatusFromExitCode(1), 'failed');
-    assert.equal(parser.getStatusFromExitCode(2), 'failed');
+    assert.strictEqual(parser.getStatusFromExitCode(0), 'passed');
+    assert.strictEqual(parser.getStatusFromExitCode(1), 'failed');
+    assert.strictEqual(parser.getStatusFromExitCode(2), 'failed');
   });
 
   test('Should parse summary line with mixed results', () => {
@@ -151,16 +151,16 @@ tests/test_example.py::test_error ERROR [100%]
 
     const result = parser.parsePytestOutput(output);
     
-    assert.equal(result.summary.total, 20);
-    assert.equal(result.summary.passed, 16);
-    assert.equal(result.summary.failed, 4);
-    assert.equal(result.summary.skipped, 0);
-    assert.equal(result.summary.errors, 0);
+    assert.strictEqual(result.summary.total, 20);
+    assert.strictEqual(result.summary.passed, 16);
+    assert.strictEqual(result.summary.failed, 4);
+    assert.strictEqual(result.summary.skipped, 0);
+    assert.strictEqual(result.summary.errors, 0);
     
     // Should create synthetic test results when individual tests can't be parsed
-    assert.equal(result.tests.length, 20);
-    assert.equal(result.tests.filter(t => t.status === 'passed').length, 16);
-    assert.equal(result.tests.filter(t => t.status === 'failed').length, 4);
+    assert.strictEqual(result.tests.length, 20);
+    assert.strictEqual(result.tests.filter(t => t.status === 'passed').length, 16);
+    assert.strictEqual(result.tests.filter(t => t.status === 'failed').length, 4);
   });
 
   test('Should parse summary line with passed first', () => {
@@ -168,11 +168,11 @@ tests/test_example.py::test_error ERROR [100%]
 
     const result = parser.parsePytestOutput(output);
     
-    assert.equal(result.summary.total, 20);
-    assert.equal(result.summary.passed, 16);
-    assert.equal(result.summary.failed, 4);
-    assert.equal(result.summary.skipped, 0);
-    assert.equal(result.summary.errors, 0);
+    assert.strictEqual(result.summary.total, 20);
+    assert.strictEqual(result.summary.passed, 16);
+    assert.strictEqual(result.summary.failed, 4);
+    assert.strictEqual(result.summary.skipped, 0);
+    assert.strictEqual(result.summary.errors, 0);
   });
 
   test('Should parse pytest output as behave-compatible format', () => {
@@ -185,14 +185,14 @@ tests/test_pytest_bdd_example.py::test_login_different_user_types[guest-guest_us
 
     const result = parser.parsePytestOutputAsBehaveCompatible(output);
     
-    assert.equal(result.length, 3);
-    assert.equal(result[0]!.filePath, 'tests/features/pytest_bdd_example.feature');
-    assert.equal(result[0]!.lineNumber, 1);
-    assert.equal(result[0]!.name, 'test_login_different_user_types[admin-admin_user-admin_pass-Welcome Administrator]');
-    assert.equal(result[0]!.status, 'passed');
+    assert.strictEqual(result.length, 3);
+    assert.strictEqual(result[0]!.filePath, 'tests/features/pytest_bdd_example.feature');
+    assert.strictEqual(result[0]!.lineNumber, 1);
+    assert.strictEqual(result[0]!.name, 'test_login_different_user_types[admin-admin_user-admin_pass-Welcome Administrator]');
+    assert.strictEqual(result[0]!.status, 'passed');
     
-    assert.equal(result[1]!.status, 'passed');
-    assert.equal(result[2]!.status, 'failed');
+    assert.strictEqual(result[1]!.status, 'passed');
+    assert.strictEqual(result[2]!.status, 'failed');
   });
 
   test('Should parse short test summary info section', () => {
@@ -207,14 +207,14 @@ FAILED tests/test_pytest_bdd_example.py::test_concurrent_user_login[200-4-8.0] -
 
     const result = parser.parsePytestOutput(output);
     
-    assert.equal(result.tests.length, 4);
-    assert.equal(result.summary.total, 20);
-    assert.equal(result.summary.passed, 16);
-    assert.equal(result.summary.failed, 4);
+    assert.strictEqual(result.tests.length, 4);
+    assert.strictEqual(result.summary.total, 20);
+    assert.strictEqual(result.summary.passed, 16);
+    assert.strictEqual(result.summary.failed, 4);
     
     // Check that the failed tests were parsed correctly
-    assert.equal(result.tests[0]!.name, 'tests/test_pytest_bdd_example.py::test_concurrent_user_login[10-1-2.0]');
-    assert.equal(result.tests[0]!.status, 'failed');
-    assert.equal(result.tests[0]!.error, 'ValueError: could not convert string to float: \'"2.0"\'');
+    assert.strictEqual(result.tests[0]!.name, 'tests/test_pytest_bdd_example.py::test_concurrent_user_login[10-1-2.0]');
+    assert.strictEqual(result.tests[0]!.status, 'failed');
+    assert.strictEqual(result.tests[0]!.error, 'ValueError: could not convert string to float: \'"2.0"\'');
   });
 }); 

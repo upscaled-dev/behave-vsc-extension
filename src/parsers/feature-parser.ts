@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { ParsedFeature, Scenario } from "../types/index";
 import { Logger } from "../utils/logger";
 import { isScenarioOutlineExampleName } from "../utils/scenario-outline";
+import { backgroundKeyword, examplesKeyword, featureKeyword, GherkinKeywords, isStepLine, resolveGherkinKeywords, ruleKeyword, scenarioKeyword } from "../utils/gherkin-keywords";
 
 /**
  * Parser for Gherkin feature files
@@ -18,6 +19,35 @@ export class FeatureParser {
   public static create(logger?: Logger): FeatureParser {
     return new FeatureParser(logger);
   }
+
+  /** Hide docstring bodies while retaining their physical source lines. */
+  public structuralLines(content: string, keywords: GherkinKeywords): string[] {
+    let delimiter: string | undefined;
+    let context: "description" | "steps" | "step" = "description";
+    return content.split("\n").map((line) => {
+      const trimmed = line.trim();
+      if (delimiter) {
+        if (trimmed.startsWith(delimiter)) {delimiter = undefined;}
+        return "";
+      }
+      if (trimmed === "" || trimmed.startsWith("#")) {return line;}
+      const opening = /^("""|'''|```)/.exec(trimmed);
+      if (context === "step" && opening) {
+        delimiter = opening[1];
+        context = "steps";
+        return "";
+      }
+      if (featureKeyword(trimmed, keywords) || ruleKeyword(trimmed, keywords) || examplesKeyword(trimmed, keywords)) {
+        context = "description";
+      } else if (backgroundKeyword(trimmed, keywords) || scenarioKeyword(trimmed, keywords)) {
+        context = "steps";
+      } else if (context !== "description") {
+        context = isStepLine(trimmed, keywords) ? "step" : "steps";
+      }
+      return line;
+    });
+  }
+
   /**
    * Parse a feature file and extract scenarios
    * @param filePath - Path to the feature file
@@ -40,8 +70,9 @@ export class FeatureParser {
    */
   public parseFeatureContent(content: string): ParsedFeature | null {
     try {
-      const lines = content.split("\n");
-      const featureInfo = this.extractFeatureInfo(lines);
+      const keywords = resolveGherkinKeywords(content);
+      const lines = this.structuralLines(content, keywords);
+      const featureInfo = this.extractFeatureInfo(lines, keywords);
 
       // Return null if no valid feature name was found
       if (featureInfo.name === "Unknown Feature") {
@@ -49,7 +80,7 @@ export class FeatureParser {
       }
 
       // Pass featureLineNumber to extractScenarios
-      const scenarios = this.extractScenarios(lines, featureInfo.lineNumber);
+      const scenarios = this.extractScenarios(lines, featureInfo.lineNumber, keywords);
 
       return {
         feature: featureInfo.name,
@@ -58,7 +89,7 @@ export class FeatureParser {
         featureLineNumber: featureInfo.lineNumber,
       };
     } catch (error) {
-      this.logger.error("Error parsing feature content:", { error });
+      this.logger.error(`Error parsing feature content: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -68,7 +99,7 @@ export class FeatureParser {
    * @param lines - Feature file lines
    * @returns Feature info with name and line number
    */
-  private extractFeatureInfo(lines: string[]): {
+  private extractFeatureInfo(lines: string[], keywords: GherkinKeywords): {
     name: string;
     lineNumber: number;
   } {
@@ -76,9 +107,10 @@ export class FeatureParser {
       const line = lines[i];
       if (line) {
         const trimmed = line.trim();
-        if (trimmed.startsWith("Feature:")) {
+        const feature = featureKeyword(trimmed, keywords);
+        if (feature) {
           return {
-            name: trimmed.substring(8).trim(),
+            name: trimmed.substring(feature.length).trim(),
             lineNumber: i + 1, // 1-based line number
           };
         }
@@ -95,7 +127,7 @@ export class FeatureParser {
    * @param lines - Feature file lines
    * @returns Array of scenarios with expanded examples
    */
-  private extractScenarios(lines: string[], featureLineNumber: number): Scenario[] {
+  private extractScenarios(lines: string[], featureLineNumber: number, keywords: GherkinKeywords): Scenario[] {
     interface ExamplesBlock {
       name?: string;
       tags: string[];
@@ -110,17 +142,17 @@ export class FeatureParser {
       outlineLineNumber: number;
     }
 
-    const isStepLine = (s: string): boolean =>
-      /^(Given|When|Then|And|But) /.test(s);
     const isTableRow = (s: string): boolean =>
       s.startsWith("|") && s.endsWith("|");
     const parseTableRow = (s: string): string[] =>
-      s.substring(1, s.length - 1).split("|").map((c) => c.trim()).filter((c) => c.length > 0);
+      s.substring(1, s.length - 1).split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, "|").trim());
 
     const regularScenarios: Scenario[] = [];
     const scenarioOutlines: OutlineCollect[] = [];
 
     let pendingTags: string[] = [];
+    let featureTags: string[] = [];
+    let ruleTags: string[] = [];
     let currentScenario: Scenario | null = null;
     let currentOutline: OutlineCollect | null = null;
     let currentExamplesBlock: ExamplesBlock | null = null;
@@ -146,7 +178,7 @@ export class FeatureParser {
     };
 
     const consumeTags = (): string[] => {
-      const t = pendingTags;
+      const t = [...new Set(pendingTags)];
       pendingTags = [];
       return t;
     };
@@ -171,17 +203,24 @@ export class FeatureParser {
         continue;
       }
 
-      if (trimmed.startsWith("Rule:")) {
-        flushCurrentScenario();
-        currentRuleName = trimmed.substring(5).trim() || undefined;
-        ruleBackgroundSteps = [];
-        backgroundTarget = null;
-        pendingTags = []; // Rule-level tags aren't propagated to children — drop
+      if (featureKeyword(trimmed, keywords)) {
+        featureTags = consumeTags();
         lineNumber++;
         continue;
       }
 
-      if (trimmed.startsWith("Background:")) {
+      const rule = ruleKeyword(trimmed, keywords);
+      if (rule) {
+        flushCurrentScenario();
+        currentRuleName = trimmed.substring(rule.length).trim() || undefined;
+        ruleBackgroundSteps = [];
+        backgroundTarget = null;
+        ruleTags = consumeTags();
+        lineNumber++;
+        continue;
+      }
+
+      if (backgroundKeyword(trimmed, keywords)) {
         flushCurrentScenario();
         backgroundTarget = currentRuleName ? "rule" : "feature";
         if (backgroundTarget === "feature") {
@@ -194,12 +233,13 @@ export class FeatureParser {
         continue;
       }
 
-      if (trimmed.startsWith("Scenario Outline:") || trimmed.startsWith("Scenario:")) {
+      const keyword = scenarioKeyword(trimmed, keywords);
+      if (keyword) {
         flushCurrentScenario();
         backgroundTarget = null;
 
-        const isOutline = trimmed.startsWith("Scenario Outline:");
-        const name = (isOutline ? trimmed.substring(17) : trimmed.substring(9)).trim();
+        const isOutline = keyword.isOutline;
+        const name = trimmed.substring(keyword.length).trim();
         if (!name) {
           this.logger.warn(`Empty ${isOutline ? "scenario outline" : "scenario"} name at line ${lineNumber}`);
         }
@@ -210,7 +250,7 @@ export class FeatureParser {
           range: new vscode.Range(lineNumber - 1, 0, lineNumber - 1, 0),
           lineNumber,
           steps: [],
-          tags: consumeTags(),
+          tags: [...new Set([...featureTags, ...ruleTags, ...consumeTags()])],
           filePath: "",
           isScenarioOutline: isOutline,
           featureLineNumber,
@@ -227,11 +267,12 @@ export class FeatureParser {
         continue;
       }
 
-      if (trimmed.startsWith("Examples:") && currentOutline) {
+      const examples = examplesKeyword(trimmed, keywords);
+      if (examples && currentOutline) {
         if (currentExamplesBlock) {
           currentOutline.examplesBlocks.push(currentExamplesBlock);
         }
-        const blockName = trimmed.substring(9).trim() || undefined;
+        const blockName = trimmed.substring(examples.length).trim() || undefined;
         currentExamplesBlock = {
           ...(blockName ? { name: blockName } : {}),
           tags: consumeTags(),
@@ -249,6 +290,9 @@ export class FeatureParser {
         if (currentExamplesBlock.headers.length === 0) {
           currentExamplesBlock.headers = cells;
         } else {
+          if (cells.length !== currentExamplesBlock.headers.length) {
+            throw new Error(`Examples row at line ${lineNumber} has ${cells.length} cells; expected ${currentExamplesBlock.headers.length}`);
+          }
           currentExamplesBlock.data.push(cells);
           currentExamplesBlock.lineNumbers.push(lineNumber);
         }
@@ -256,7 +300,7 @@ export class FeatureParser {
         continue;
       }
 
-      if (isStepLine(trimmed)) {
+      if (isStepLine(trimmed, keywords)) {
         if (backgroundTarget === "feature") {
           featureBackgroundSteps.push(trimmed);
         } else if (backgroundTarget === "rule") {
@@ -268,8 +312,8 @@ export class FeatureParser {
         continue;
       }
 
-      // Non-step line outside Background terminates Background collection
-      if (backgroundTarget && !isStepLine(trimmed)) {
+      // Data tables are step arguments, so any other non-step line terminates Background collection.
+      if (backgroundTarget && !isTableRow(trimmed)) {
         backgroundTarget = null;
       }
 
@@ -303,7 +347,7 @@ export class FeatureParser {
             })
             .join(", ");
 
-          const mergedTags = [...(outline.scenario.tags ?? []), ...block.tags];
+          const mergedTags = [...new Set([...(outline.scenario.tags ?? []), ...block.tags])];
           const exampleScenario: Scenario = {
             name: `${exampleIndex}: ${outline.scenario.name} - ${exampleValues}`,
             line: exampleLine,
@@ -316,6 +360,7 @@ export class FeatureParser {
             outlineLineNumber: outline.outlineLineNumber,
             featureLineNumber,
             examplesBlockLineNumber: block.blockLineNumber,
+            exampleValues: Object.fromEntries(block.headers.map((header, index) => [header, row[index] ?? ""])),
           };
           if (block.name) {exampleScenario.examplesBlockName = block.name;}
           if (block.tags.length > 0) {exampleScenario.examplesBlockTags = block.tags;}
@@ -331,12 +376,11 @@ export class FeatureParser {
 
   /**
    * Extract all unique tags from a feature file
-   * @param content - Feature file content
+   * @param lines - Feature file lines outside docstrings
    * @returns Array of unique tags
    */
-  private extractTags(content: string): string[] {
+  private extractTags(lines: string[]): string[] {
     const tags = new Set<string>();
-    const lines = content.split("\n");
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -360,7 +404,8 @@ export class FeatureParser {
    */
   private getScenarioRange(
     lines: string[],
-    scenarioLineNumber: number
+    scenarioLineNumber: number,
+    keywords: GherkinKeywords
   ): vscode.Range {
     const startLine = scenarioLineNumber - 1; // Convert to 0-based
     let endLine = startLine;
@@ -370,9 +415,8 @@ export class FeatureParser {
       const line = lines[i]?.trim() ?? "";
       // Stop at next scenario, scenario outline, or feature
       if (
-        line.startsWith("Scenario:") ||
-        line.startsWith("Scenario Outline:") ||
-        line.startsWith("Feature:")
+        scenarioKeyword(line, keywords) ||
+        featureKeyword(line, keywords)
       ) {
         break;
       }
@@ -393,11 +437,12 @@ export class FeatureParser {
     filePath: string
   ): vscode.CodeLens[] {
     const codeLenses: vscode.CodeLens[] = [];
-    const lines = content.split("\n");
+    const keywords = resolveGherkinKeywords(content);
+    const lines = this.structuralLines(content, keywords);
     let lineNumber = 1;
 
     // Extract all available tags from the feature file
-    const allTags = this.extractTags(content);
+    const allTags = this.extractTags(lines);
 
     // Parse scenarios to get scenario outline examples
     const parsedFeature = this.parseFeatureContent(content);
@@ -409,19 +454,15 @@ export class FeatureParser {
     for (const line of lines) {
       const trimmed = line.trim();
 
-      if (
-        trimmed.startsWith("Scenario:") ||
-        trimmed.startsWith("Scenario Outline:")
-      ) {
-        const scenarioName = trimmed.includes("Scenario:")
-          ? trimmed.substring(9).trim()
-          : trimmed.substring(17).trim();
+      const keyword = scenarioKeyword(trimmed, keywords);
+      if (keyword) {
+        const scenarioName = trimmed.substring(keyword.length).trim();
 
         // Calculate the range for this scenario (multiline)
-        const scenarioRange = this.getScenarioRange(lines, lineNumber);
+        const scenarioRange = this.getScenarioRange(lines, lineNumber, keywords);
 
         // Check if this is a scenario outline
-        const isScenarioOutline = trimmed.startsWith("Scenario Outline:");
+        const isScenarioOutline = keyword.isOutline;
 
         // Add Run Scenario CodeLens
         codeLenses.push(
@@ -483,7 +524,7 @@ export class FeatureParser {
       let featureLineIndex = -1;
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        if (typeof line === "string" && line.trim().startsWith("Feature:")) {
+        if (typeof line === "string" && featureKeyword(line.trim(), keywords)) {
           featureLineIndex = i;
           break;
         }
@@ -494,10 +535,7 @@ export class FeatureParser {
         let featureEndLine = featureLineIndex;
         for (let i = featureLineIndex + 1; i < lines.length; i++) {
           const line = lines[i]?.trim() ?? "";
-          if (
-            line.startsWith("Scenario:") ||
-            line.startsWith("Scenario Outline:")
-          ) {
+          if (scenarioKeyword(line, keywords)) {
             break;
           }
           featureEndLine = i;

@@ -36,7 +36,7 @@ export class FrameworkFactory {
    * @param workspacePath - Path to the workspace root
    * @returns Promise resolving to the detected framework name
    */
-  public static async autoDetect(workspacePath?: string): Promise<string> {
+  public static async autoDetect(workspacePath?: string, options: { notify?: boolean } = {}): Promise<string> {
     const wsPath = workspacePath ?? this.getWorkspacePath();
     
     if (!wsPath) {
@@ -52,7 +52,7 @@ export class FrameworkFactory {
       if (hasBehaveConfig && hasPytestBddConfig) {
         const message = "⚠️ Both behave and pytest-bdd configurations detected! Using behave by default. " +
                        "Please remove one framework's configuration files or set 'behaveTestRunner.framework' manually.";
-        vscode.window.showWarningMessage(message);
+        if (options.notify !== false) {vscode.window.showWarningMessage(message);}
         return "behave"; // Prefer behave for backward compatibility
       }
 
@@ -72,7 +72,7 @@ export class FrameworkFactory {
       if (hasFeatureFiles && hasPytestFiles) {
         const message = "📁 Both .feature files and pytest test files found. " +
                        "Defaulting to behave. Please add framework configuration files or set 'behaveTestRunner.framework' manually for explicit selection.";
-        vscode.window.showInformationMessage(message);
+        if (options.notify !== false) {vscode.window.showInformationMessage(message);}
         
         // Always default to behave for backward compatibility
         return "behave";
@@ -286,4 +286,4 @@ export class FrameworkFactory {
   public static isFrameworkSupported(framework: string): boolean {
     return this.getSupportedFrameworks().includes(framework.toLowerCase());
   }
-} 
+}

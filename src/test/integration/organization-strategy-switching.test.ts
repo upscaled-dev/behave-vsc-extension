@@ -2,13 +2,17 @@ import * as assert from "assert";
 import * as vscode from "vscode";
 import { BehaveTestProvider } from "../../test-providers/behave-test-provider.js";
 import { CommandManager } from "../../commands/command-manager.js";
+import { createCheckedOutputChannel } from "../output-channel";
 
 suite("Organization Strategy Switching Integration", () => {
   let testController: vscode.TestController;
   let testProvider: BehaveTestProvider;
   let commandManager: CommandManager;
+  let createOutputChannel: typeof vscode.window.createOutputChannel;
 
   setup(() => {
+    createOutputChannel = vscode.window.createOutputChannel;
+    vscode.window.createOutputChannel = createCheckedOutputChannel as typeof vscode.window.createOutputChannel;
     testController = vscode.tests.createTestController(
       "integration-org",
       "Integration Organization"
@@ -19,8 +23,10 @@ suite("Organization Strategy Switching Integration", () => {
   });
 
   teardown(() => {
+    testProvider.dispose();
     testController.dispose();
     commandManager.dispose();
+    vscode.window.createOutputChannel = createOutputChannel;
   });
 
   test("Test provider exposes organization manager to command manager", () => {
@@ -96,4 +102,4 @@ suite("Organization Strategy Switching Integration", () => {
     assert.ok(provider.organizationManager, "Test provider should have organization manager");
     assert.ok(provider.discoveryManager, "Test provider should have discovery manager");
   });
-}); 
+});

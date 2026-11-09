@@ -13,6 +13,7 @@ import { TestItemMapping } from "../utils/test-item-mapping";
 import { CommandArguments, CommandHandler, BehaveExtensionContext } from "../types";
 import { FrameworkFactory } from "../core/framework-factory";
 import { isScenarioOutlineExampleName } from "../utils/scenario-outline";
+import { resolveGherkinKeywords, scenarioKeyword } from "../utils/gherkin-keywords";
 
 interface OrganizationStrategy {
   strategyType: string;
@@ -23,14 +24,10 @@ interface OrganizationManagerLike {
   getStrategy(): OrganizationStrategy;
   setStrategy(strategy: OrganizationStrategy): void;
 }
-interface DiscoveryManagerLike {
-  clearCache(): void;
-}
 interface TestProviderLike {
   organizationManager?: OrganizationManagerLike;
-  discoveryManager?: DiscoveryManagerLike;
   discoverTests?: () => Promise<void>;
-  forceRefreshTestExplorer?: () => Promise<void>;
+  refreshTests: () => Promise<void>;
 }
 
 export interface CommandOptions {
@@ -41,7 +38,7 @@ export interface CommandOptions {
   handler: CommandHandler;
 }
 
-type TestStatus = "started" | "passed" | "failed";
+type TestStatus = "started" | "passed" | "failed" | "errored" | "skipped";
 
 const STRATEGY_TYPE_BY_VALUE: Record<string, string> = {
   tag: "TagBasedOrganization",
@@ -62,6 +59,7 @@ export class CommandManager {
   private testProvider: unknown;
   private readonly testItemMap = new Map<string, vscode.TestItem>();
   private isTestRunning = false;
+  private pendingOrganizationChange: { manager: OrganizationManagerLike; original: OrganizationStrategy } | undefined;
 
   public static create(context?: BehaveExtensionContext): CommandManager {
     return new CommandManager(context);
@@ -113,25 +111,14 @@ export class CommandManager {
     return this.getFrameworkName() === "pytest-bdd" ? "Pytest-BDD" : "Behave";
   }
 
-  private isBehave(): boolean {
-    return this.getFrameworkName() === "behave";
-  }
-
-  /**
-   * Run a test once and return its results. For Behave the `capture` call itself
-   * runs Behave a single time in the terminal — showing native (pretty) output
-   * while writing JSON to a file for status icons — so the separate shell-display
-   * `shellRun` is skipped (avoids running each test twice). Other frameworks run
-   * `shellRun` for native output, then `capture` to collect results.
-   */
+  /** Present the native output produced by the same invocation that supplies results. */
   private async runAndRender(
-    shellRun: () => Promise<void>,
     capture: () => Promise<import("../types").TestRunResult>
   ): Promise<import("../types").TestRunResult> {
-    if (!this.isBehave()) {
-      await shellRun();
-    }
-    return capture();
+    const result = await capture();
+    if (!result.outputStreamed) {this.logger.info(result.display ?? result.output);}
+    this.logger.showOutput();
+    return result;
   }
 
   public setTestProvider(testProvider: unknown): void {
@@ -187,6 +174,8 @@ export class CommandManager {
   private applyStatusToRun(run: vscode.TestRun, item: vscode.TestItem, status: TestStatus): void {
     if (status === "started") {run.started(item);}
     else if (status === "passed") {run.passed(item);}
+    else if (status === "errored") {run.errored(item, new vscode.TestMessage("Test execution failed. Inspect the captured output."));}
+    else if (status === "skipped") {run.skipped(item);}
     else {run.failed(item, new vscode.TestMessage("Test failed"));}
   }
 
@@ -243,16 +232,17 @@ export class CommandManager {
   public isScenarioOutline(filePath: string, lineNumber: number, scenarioName?: string): boolean {
     try {
       if (isScenarioOutlineExampleName(scenarioName)) {return false;}
-      const lines = fs.readFileSync(filePath, "utf-8").split("\n");
+      const content = fs.readFileSync(filePath, "utf-8");
+      const lines = content.split("\n");
       if (lineNumber < 1 || lineNumber > lines.length) {return false;}
-      return lines[lineNumber - 1]?.trim().startsWith("Scenario Outline:") ?? false;
+      return scenarioKeyword(lines[lineNumber - 1]?.trim() ?? "", resolveGherkinKeywords(content))?.isOutline ?? false;
     } catch (error) {
       this.logger.warn(`Could not read feature file: ${filePath}`, { error: errMsg(error) });
       return false;
     }
   }
 
-  public registerCommands(context: vscode.ExtensionContext): void {
+  public registerCommands(_context?: vscode.ExtensionContext): void {
     try {
       this.clearCommands();
       const fw = this.getFrameworkDisplayName();
@@ -284,7 +274,7 @@ export class CommandManager {
       ];
 
       for (const cmd of commands) {
-        this.registerCommand(context, cmd);
+        this.registerCommand(cmd);
       }
 
       this.logger.info(`Registered ${commands.length} commands`);
@@ -295,7 +285,7 @@ export class CommandManager {
     }
   }
 
-  private registerCommand(context: vscode.ExtensionContext, options: CommandOptions): void {
+  private registerCommand(options: CommandOptions): void {
     const disposable = vscode.commands.registerCommand(options.command, async (...args: CommandArguments) => {
       try {
         await options.handler(...args);
@@ -306,7 +296,6 @@ export class CommandManager {
       }
     });
     this.commands.set(options.command, disposable);
-    context.subscriptions.push(disposable);
   }
 
   private async runScenarioCore(
@@ -318,7 +307,7 @@ export class CommandManager {
     if (!lineNumber) {
       const featureOpts = { filePath, ...(tags ? { tags } : {}) };
       return this.runAndRender(
-        () => this.context.testExecutor.runFeatureFile(featureOpts),
+
         () => this.context.testExecutor.runFeatureFileWithOutput(featureOpts)
       );
     }
@@ -330,7 +319,7 @@ export class CommandManager {
       ...(tags ? { tags } : {}),
     };
     return this.runAndRender(
-      () => this.context.testExecutor.runScenario(opts),
+
       () => this.context.testExecutor.runScenarioWithOutput(opts)
     );
   }
@@ -347,45 +336,29 @@ export class CommandManager {
     const [filePath, lineNumber, scenarioName] = args as [string, number | undefined, string | undefined];
     if (!filePath) {throw new Error("File path is required");}
 
-    this.updateTestStatus(filePath, lineNumber, "started");
-    try {
-      const result = await this.runScenarioCore(filePath, lineNumber, scenarioName);
-      this.updateTestStatus(filePath, lineNumber, result.success ? "passed" : "failed");
-      this.logResult("Scenario", result);
-      if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
-    } catch (error) {
-      this.updateTestStatus(filePath, lineNumber, "failed");
-      throw error;
-    }
+    const result = await this.runScenarioCore(filePath, lineNumber, scenarioName);
+    this.updateTestStatus(filePath, lineNumber, result.cancelled ? "skipped" : result.errored ? "errored" : result.success ? "passed" : "failed");
+    this.logResult("Scenario", result);
+    if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
 
   private async runFeature(...args: CommandArguments): Promise<void> {
     const [filePath] = args as [string];
     if (!filePath) {throw new Error("File path is required");}
 
-    this.updateTestStatus(filePath, undefined, "started");
-    try {
-      const result = await this.runAndRender(
-        () => this.context.testExecutor.runFeatureFile({ filePath }),
-        () => this.context.testExecutor.runFeatureFileWithOutput({ filePath })
-      );
-      this.updateTestStatus(filePath, undefined, result.success ? "passed" : "failed");
-      this.logResult("Feature", result);
-      if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
-    } catch (error) {
-      this.updateTestStatus(filePath, undefined, "failed");
-      throw error;
-    }
+    const result = await this.runAndRender(
+      () => this.context.testExecutor.runFeatureFileWithOutput({ filePath })
+    );
+    this.updateTestStatus(filePath, undefined, result.cancelled ? "skipped" : result.errored ? "errored" : result.success ? "passed" : "failed");
+    this.logResult("Feature", result);
+    if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
 
   private async runAllTests(): Promise<void> {
-    this.logger.info(`Running all ${this.getFrameworkName()} tests`);
-    if (this.isBehave()) {
-      // Single run: native output to the terminal + JSON to a file for icons.
-      await this.context.testExecutor.runAllTestsWithOutput();
-    } else {
-      await this.context.testExecutor.runAllTests();
-    }
+    this.logger.info("Running all workspace tests");
+    const result = await this.runAndRender(() => this.context.testExecutor.runAllTestsWithOutput());
+    this.logResult("Suite", result);
+    if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
 
   private async debugScenario(...args: CommandArguments): Promise<void> {
@@ -403,18 +376,14 @@ export class CommandManager {
   private async debugFeature(...args: CommandArguments): Promise<void> {
     const [filePath] = args as [string];
     if (!filePath) {throw new Error("File path is required");}
-    await this.context.testExecutor.runFeatureFile({ filePath });
+    await this.context.testExecutor.debugScenario({ filePath, debug: true });
   }
 
-  private refreshTests(): void {
+  private async refreshTests(): Promise<void> {
     if (!this.testProvider) {
-      this.showErrorMessage("Failed to refresh tests: Test provider not available");
-      return;
+      throw new Error("Test provider not available");
     }
-    const provider = this.testProvider as TestProviderLike;
-    provider.discoverTests?.().catch((error) => {
-      this.logger.error("Failed to refresh tests after organization change", { error: errMsg(error) });
-    });
+    await (this.testProvider as TestProviderLike).discoverTests?.();
   }
 
   private showOutput(): void {
@@ -430,8 +399,8 @@ export class CommandManager {
     }
   }
 
-  private discoverTests(): void {
-    vscode.window.showInformationMessage("Test discovery started");
+  private discoverTests(): Promise<void> {
+    return this.refreshTests();
   }
 
   private async runFeatureWithTags(...args: CommandArguments): Promise<void> {
@@ -439,19 +408,12 @@ export class CommandManager {
     if (!filePath) {throw new Error("File path is required");}
     if (!tags) {throw new Error("Tags are required");}
 
-    this.updateTestStatusForTags(filePath, tags, "started");
-    try {
-      const result = await this.runAndRender(
-        () => this.context.testExecutor.runFeatureFile({ filePath, tags }),
-        () => this.context.testExecutor.runFeatureFileWithOutput({ filePath, tags })
-      );
-      this.updateTestStatusForTags(filePath, tags, result.success ? "passed" : "failed");
-      this.logResult("Feature with tags", result);
-      if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
-    } catch (error) {
-      this.updateTestStatusForTags(filePath, tags, "failed");
-      throw error;
-    }
+    const result = await this.runAndRender(
+      () => this.context.testExecutor.runFeatureFileWithOutput({ filePath, tags })
+    );
+    this.updateTestStatusForTags(filePath, tags, result.cancelled ? "skipped" : result.errored ? "errored" : result.success ? "passed" : "failed");
+    this.logResult("Feature with tags", result);
+    if (!result.success) {throw new Error(`Test failed: ${result.error ?? "Unknown error"}`);}
   }
 
   private async runScenarioWithTags(...args: CommandArguments): Promise<void> {
@@ -461,14 +423,15 @@ export class CommandManager {
 
     const opts = { filePath, lineNumber, scenarioName, tags };
     await this.runAndRender(
-      () => this.context.testExecutor.runScenario(opts),
+
       () => this.context.testExecutor.runScenarioWithOutput(opts)
     );
   }
 
   private async runAllTestsParallel(): Promise<void> {
-    this.logger.info(`Running all ${this.getFrameworkName()} tests in parallel`);
-    await this.context.testExecutor.runAllTestsInParallel();
+    this.logger.info("Running all workspace tests in parallel");
+    try {await this.context.testExecutor.runAllTestsInParallel();}
+    finally {this.showOutput();}
   }
 
   private async runScenarioWithContext(...args: CommandArguments): Promise<void> {
@@ -477,7 +440,7 @@ export class CommandManager {
 
     const opts = { filePath, lineNumber, ...(scenarioName ? { scenarioName } : {}) };
     const result = await this.runAndRender(
-      () => this.context.testExecutor.runScenario(opts),
+
       () => this.context.testExecutor.runScenarioWithOutput(opts)
     );
     this.logResult("Scenario with context", result);
@@ -501,7 +464,7 @@ export class CommandManager {
     if (!filePath) {throw new Error("File path is required");}
 
     const result = await this.runAndRender(
-      () => this.context.testExecutor.runFeatureFile({ filePath }),
+
       () => this.context.testExecutor.runFeatureFileWithOutput({ filePath })
     );
     this.logResult("Feature with context", result);
@@ -528,6 +491,7 @@ export class CommandManager {
   }
 
   public dispose(): void {
+    this.pendingOrganizationChange = undefined;
     for (const [, disposable] of this.commands) {
       try { disposable.dispose(); } catch { /* ignore */ }
     }
@@ -571,20 +535,23 @@ export class CommandManager {
         from: organizationManager.getStrategy().strategyType,
         to: strategy.strategy.strategyType,
       });
+      const pending = {
+        manager: organizationManager,
+        original: this.pendingOrganizationChange?.manager === organizationManager
+          ? this.pendingOrganizationChange.original : organizationManager.getStrategy(),
+      };
+      this.pendingOrganizationChange = pending;
       organizationManager.setStrategy(strategy.strategy);
-      provider?.discoveryManager?.clearCache();
-
-      await new Promise((r) => setTimeout(r, 100));
-      await provider?.discoverTests?.();
-      await new Promise((r) => setTimeout(r, 100));
-      await provider?.forceRefreshTestExplorer?.();
-      await new Promise((r) => setTimeout(r, 100));
-
       try {
-        await vscode.commands.executeCommand("testing.refreshTests");
-      } catch {
-        /* command may be unavailable */
+        await provider?.refreshTests();
+      } catch (error) {
+        if (this.pendingOrganizationChange !== pending) {return;}
+        organizationManager.setStrategy(pending.original);
+        this.pendingOrganizationChange = undefined;
+        throw error;
       }
+      if (this.pendingOrganizationChange !== pending) {return;}
+      this.pendingOrganizationChange = undefined;
 
       vscode.window.showInformationMessage(`Organization strategy changed to: ${strategy.name}`);
     } catch (error) {

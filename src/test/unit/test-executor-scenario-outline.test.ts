@@ -1,18 +1,9 @@
 import * as assert from "assert";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
-import { TestExecutor } from "../../core/test-executor";
+import { BehaveCommandBuilder } from "../../core/command-builders/behave-command-builder";
+import { ExtensionConfig } from "../../core/extension-config";
 import { isScenarioOutlineExampleName, extractOutlineName } from "../../utils/scenario-outline";
 
 suite("Test Executor Scenario Outline Unit Tests", () => {
-  let testExecutor: TestExecutor;
-
-  setup(() => {
-    // Create a fresh test executor instance for each test
-    testExecutor = new TestExecutor();
-  });
-
   test("Should detect scenario outline examples correctly", () => {
     // Test scenario outline example detection
     const isExample1 = isScenarioOutlineExampleName(
@@ -153,66 +144,11 @@ suite("Test Executor Scenario Outline Unit Tests", () => {
     );
   });
 
-  test("Should run all examples when running a scenario outline", async () => {
-    // Arrange: mock a feature file with a scenario outline and two examples
-    const featureContent = `
-Feature: Login
-  Scenario Outline: Login with different credentials
-    Given I am on the login page
-    When I enter "<username>" and "<password>"
-    Then I should see "<result>"
-
-    Examples:
-      | username | password | result |
-      | admin    | secret   | success |
-      | user     | wrong    | error |
-`;
-    const filePath = path.join(os.tmpdir(), "test-outline.feature");
-    fs.writeFileSync(filePath, featureContent);
-
-    // Spy to capture commands sent to the terminal
-    const sentCommands: string[] = [];
-    (testExecutor as any).executeCommand = (cmd: string) => {
-      sentCommands.push(cmd);
-    };
-
-    // Act: run the scenario outline (not an example)
-    await testExecutor.runScenario({
-      filePath,
-      scenarioName: "Login with different credentials",
-    });
-
-    // Should run a single command with --name="Login with different credentials"
-    const expected = '--name="Login with different credentials"';
-    const found = sentCommands.some(cmd => cmd.includes(expected));
-    if (!found) {
-      console.log("Sent commands:", sentCommands);
-    }
-    assert.ok(found, `Should run scenario outline with: ${expected}`);
-    assert.strictEqual(sentCommands.length, 1, "Should run exactly 1 command for the outline");
-    fs.unlinkSync(filePath);
-  });
-
-  test("Should run all examples for scenario outline in advanced-example.feature", async () => {
-    // Resolve relative to this compiled test (out/test/unit) rather than cwd,
-    // which is not the repo root in the Windows VS Code test host.
-    const filePath = path.join(__dirname, "../../../features/advanced-example.feature");
-    const scenarioOutlineName = "Load testing with multiple users";
-    const sentCommands: string[] = [];
-    (testExecutor as any).executeCommand = (cmd: string) => {
-      sentCommands.push(cmd);
-    };
-    await testExecutor.runScenario({
-      filePath,
-      scenarioName: scenarioOutlineName,
-    });
-    // Should run a single command with --name="Load testing with multiple users"
-    const expected = '--name="Load testing with multiple users"';
-    const found = sentCommands.some(cmd => cmd.includes(expected));
-    if (!found) {
-      console.log("Sent commands:", sentCommands);
-    }
-    assert.ok(found, `Should run scenario outline with: ${expected}`);
-    assert.strictEqual(sentCommands.length, 1, "Should run exactly 1 command for the outline");
+  test("outline and individual row use the builder's exact selection semantics", async () => {
+    const builder = new BehaveCommandBuilder({ workingDirectory: "/project", getIntelligentBehaveCommand: async () => "behave", tags: "", dryRun: false } as unknown as ExtensionConfig);
+    const outline = await builder.buildScenarioCommand({ filePath: "advanced.feature", scenarioName: "Load testing with multiple users" });
+    assert.deepStrictEqual(outline.args, ["advanced.feature", "--name", "Load testing with multiple users", "-f", "pretty"]);
+    const row = await builder.buildScenarioCommand({ filePath: "advanced.feature", lineNumber: 39, scenarioName: "1: Load testing with multiple users - users: 10" });
+    assert.deepStrictEqual(row.args, ["advanced.feature:39", "-f", "pretty"]);
   });
 });

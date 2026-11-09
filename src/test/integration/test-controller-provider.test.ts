@@ -1,12 +1,16 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import { BehaveTestProvider } from "../../test-providers/behave-test-provider.js";
+import { createCheckedOutputChannel } from "../output-channel";
 
 suite("BehaveTestProvider Integration", () => {
   let testController: vscode.TestController;
   let testProvider: BehaveTestProvider;
+  let createOutputChannel: typeof vscode.window.createOutputChannel;
 
   setup(() => {
+    createOutputChannel = vscode.window.createOutputChannel;
+    vscode.window.createOutputChannel = createCheckedOutputChannel as typeof vscode.window.createOutputChannel;
     testController = vscode.tests.createTestController(
       "integration",
       "Integration"
@@ -15,7 +19,9 @@ suite("BehaveTestProvider Integration", () => {
   });
 
   teardown(() => {
+    testProvider.dispose();
     testController.dispose();
+    vscode.window.createOutputChannel = createOutputChannel;
   });
 
   test("Provider and extension use the same controller instance", () => {
@@ -45,19 +51,16 @@ suite("BehaveTestProvider Integration", () => {
     assert.strictEqual(tests.size, 0, "Should be empty initially");
   });
 
-  test("ExtractLineNumberFromTestId works correctly", () => {
-    const testId = "/path/to/file.feature:10";
-    const lineNumber = testProvider["extractLineNumberFromTestId"](testId);
-    assert.strictEqual(lineNumber, 10, "Should extract line number 10");
-
-    const testIdNoLine = "/path/to/file.feature";
-    const lineNumberNoLine =
-      testProvider["extractLineNumberFromTestId"](testIdNoLine);
-    assert.strictEqual(
-      lineNumberNoLine,
-      undefined,
-      "Should return undefined when no line number"
-    );
+  test("Parsed scenario metadata retains its exact executable line", () => {
+    const file = vscode.Uri.file("/path/to/file.feature");
+    const parsed = testProvider["context"].featureParser.parseFeatureContent("Feature: Exact lines\n\n\n\n\n\n\n\n\n  Scenario: Named scenario\n    Given a step\n");
+    assert.ok(parsed?.scenarios[0]);
+    const scenario = parsed.scenarios[0];
+    scenario.filePath = file.fsPath;
+    const builder = testProvider["treeBuilder"];
+    const item = builder.createScenarioTestItem(file, scenario);
+    assert.strictEqual(builder.scenarioFor(item.id)?.lineNumber, 10);
+    assert.strictEqual(builder.scenarioFor(file.fsPath), undefined);
   });
 
   test("TestExecutor is properly initialized", () => {

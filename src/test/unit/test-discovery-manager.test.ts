@@ -71,7 +71,7 @@ suite("TestDiscoveryManager Unit Tests", () => {
       // Mock findFiles to return some files
       const originalFindFiles = vscode.workspace.findFiles;
       (vscode.workspace as any).findFiles = () => {
-        return Promise.resolve([{ fsPath: "test.feature" } as vscode.Uri]);
+        return Promise.resolve([vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0]!.uri, "test.feature")]);
       };
 
       // First discovery should cache

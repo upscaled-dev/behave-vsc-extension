@@ -39,19 +39,19 @@ export class BehaveJsonParser {
       if (startIdx !== -1 && lastBracket !== -1 && lastBracket > startIdx) {
         jsonPart = jsonOutput.slice(startIdx, lastBracket + 1);
       } else {
-        this.logger.error('Could not find JSON array in Behave output', { jsonOutput });
+        this.logger.error('Could not find JSON array in Behave output', { bytes: Buffer.byteLength(jsonOutput) });
         throw new Error('Could not find JSON array in Behave output');
       }
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonPart);
-    } catch (e) {
-      this.logger.error("Failed to parse Behave JSON output", { error: e, jsonPart });
-      throw new Error(`Failed to parse Behave JSON output: ${e}`);
+    } catch {
+      this.logger.error("Failed to parse Behave JSON output", { bytes: Buffer.byteLength(jsonPart) });
+      throw new Error("Failed to parse Behave JSON output");
     }
     if (!Array.isArray(parsed)) {
-      this.logger.error("Behave JSON output is not an array", { parsed });
+      this.logger.error("Behave JSON output is not an array");
       throw new Error("Behave JSON output is not an array");
     }
     return parsed as Array<Record<string, unknown>>;
@@ -64,30 +64,38 @@ export class BehaveJsonParser {
       for (const feature of parsed) {
         results.push(...this.parseFeatureScenarios(feature));
       }
-      this.logger.info("Returning parsed scenario results", { results });
+      this.logger.debug("Parsed Behave report", { features: parsed.length, scenarios: results.length });
       return results;
     } catch (err) {
-      this.logger.error("Error in parseBehaveJsonOutput", { error: err, input: jsonOutput });
+      this.logger.error("Invalid Behave report", { bytes: Buffer.byteLength(jsonOutput) });
       throw err;
     }
   }
 
   /** Extract scenario/scenario-outline results from a single feature node. */
   private parseFeatureScenarios(feature: Record<string, unknown>): BehaveScenarioResult[] {
-    const elements = feature['elements'];
-    if (!Array.isArray(elements)) {
-      return [];
+    const elements = feature?.['elements'];
+    const filePath = feature?.['filename'] ?? feature?.['location'];
+    if (!Array.isArray(elements) || typeof filePath !== "string" || !filePath) {
+      throw new Error("Invalid Behave report: each feature requires a file location and elements array.");
     }
-    const filePath = (feature['filename'] ?? feature['location'] ?? "") as string;
     const results: BehaveScenarioResult[] = [];
+    const statuses = new Set(["unknown", "untested", "executing", "skipped", "passed", "xfailed", "xpassed", "failed", "error", "hook_error", "cleanup_error", "undefined", "pending", "pending_warn", "untested_pending", "untested_undefined"]);
     for (const scenario of elements as Array<Record<string, unknown>>) {
-      // Only consider scenarios and scenario outlines (not backgrounds, etc.)
-      if (scenario['type'] !== "scenario" && scenario['type'] !== "scenario_outline") {
-        continue;
+      if (scenario?.['type'] === "background") {continue;}
+      const steps = scenario?.['steps'];
+      const line = scenario ? this.extractScenarioLine(scenario) : 0;
+      if ((scenario?.['type'] !== "scenario" && scenario?.['type'] !== "scenario_outline") ||
+        typeof scenario['name'] !== "string" || !Number.isInteger(line) || line <= 0 || !Array.isArray(steps) ||
+        steps.some((step: Record<string, unknown> | null) => !step || typeof step['name'] !== "string" ||
+          (step['result'] !== undefined && (!step['result'] || !statuses.has((step['result'] as Record<string, unknown>)['status'] as string)))) ||
+        (scenario['status'] !== undefined ? !statuses.has(scenario['status'] as string) :
+          steps.length === 0 || steps.some((step: Record<string, unknown>) => !step['result']))) {
+        throw new Error("Invalid Behave report: each scenario requires a name, line, steps and recognized results.");
       }
       results.push({
         filePath,
-        lineNumber: this.extractScenarioLine(scenario),
+        lineNumber: line,
         name: (scenario['name'] ?? "") as string,
         status: this.extractScenarioStatus(scenario),
         output: this.renderScenarioOutput(scenario),

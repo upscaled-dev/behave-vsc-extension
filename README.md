@@ -23,7 +23,7 @@ A VS Code extension for discovering, running, and debugging [Behave](https://beh
 
 ### From VSIX
 
-1. Download the latest `.vsix` file from the [releases page](https://github.com/your-username/behave-test-runner/releases)
+1. Download the latest `.vsix` file from the [releases page](https://github.com/upscaled-dev/behave-vsc-extension/releases)
 2. In VS Code, go to Extensions (Ctrl+Shift+X)
 3. Click the "..." menu and select "Install from VSIX..."
 4. Select the downloaded file
@@ -34,8 +34,7 @@ A VS Code extension for discovering, running, and debugging [Behave](https://beh
 git clone https://github.com/your-username/behave-test-runner.git
 cd behave-test-runner
 npm install
-npm run compile
-npm run package
+npm run package:vsix
 ```
 
 ## Usage
@@ -119,8 +118,11 @@ When you open a `.feature` file, you'll see inline buttons above each scenario:
 Click on any step in a `.feature` file and press <kbd>F12</kbd> (or right-click → "Go to Definition") to jump to the matching Python `@given`/`@when`/`@then`/`@step` decorator.
 
 Supports both styles:
-- **behave**: `@given('I have <count> users')`
+
+- **behave**: `@given('I have {count:d} users')`
 - **pytest-bdd**: `@given(parsers.parse('I enter {name}'))` and `@then(parsers.re(r'^count is (\d+)$'))`
+
+Navigation is static and does not import or execute project code. It recognizes single-line explicit imports and aliases, plus unshadowed injected Behave decorators when the selected framework is Behave. It supports Behave `parse`, `cfparse`, and unanchored `re` after a standalone single-line literal `use_step_matcher` switch, and pytest-bdd literals plus `parsers.parse`, `parsers.cfparse`, and `parsers.re`. Multiline decorators remain supported. Supported parse fields are untyped, unnamed typed, or repeated named fields with the same `d`, `f`, or `w` type. `d` accepts signed decimal, binary, octal, and hexadecimal values; `f` accepts decimal values plus lower- or upper-case `nan` and `inf` in Behave, and pytest-bdd follows its case-insensitive parser; `w` accepts Unicode word characters. Cfparse cardinality fields and custom converters are unresolved. The supported regex subset is literal text, groups including named groups, character classes, quantifiers, dot, and ASCII-only `\\d`; pytest-bdd may use outer `^` and `$` anchors. Ordinary and raw Python string literals are decoded according to their literal form. Pytest-bdd's single literal `target_fixture=` metadata option is supported. Dynamic or reassigned imports and matcher changes, `register_type`, `re0`, other decorator options, extra positional arguments, unsupported Python regex, and outline steps without concrete Examples rows are left unresolved rather than guessed.
 
 By default the extension searches `features/steps/**/*.py`, `tests/**/*.py`, and `tests/steps/**/*.py`. Override via `behaveTestRunner.stepDefinitionPaths`:
 
@@ -138,6 +140,10 @@ If you prefer the **Cucumber (Gherkin) Full Support** extension's navigation, di
 ```jsonc
 { "behaveTestRunner.enableStepDefinitionNavigation": false }
 ```
+
+### Gherkin languages
+
+Discovery, CodeLens, Behave outline selection, and step-definition navigation use the standard Gherkin language declared by a leading `# language: <code>` header. Files without a header use English, including `Business Need:` and `Ability:` feature aliases. An unknown header is not treated as English, so correct the header before discovery can show scenarios. Runner-configured default languages are not used for discovery, so declare `# language:` in each localized feature. The bundled keyword catalog is from gherkin-official 29.0.0; see [third-party notices](THIRD-PARTY-NOTICES.md).
 
 ### Recommended companion settings (Cucumber Full Support)
 
@@ -166,6 +172,24 @@ This extension is designed to coexist with [Cucumber (Gherkin) Full Support](htt
 | `Behave: Debug Scenario`             | Debug a specific scenario (used by CodeLens)   |
 | `Behave: Run Feature File`           | Run an entire feature file                     |
 | `Behave: Run Feature File with Tags` | Run a feature file with specific tags          |
+
+Tests require a trusted workspace. Discovery and step navigation remain available in Restricted Mode. One run, debug operation, or parallel run can execute at a time in each extension host. Test Explorer cancellation stops the owned process group and skips unfinished selections; completed results are preserved. Deactivation waits for confirmed execution cleanup. If termination cannot be confirmed within the shutdown window, the operation ends with an error and further execution requires reloading the window. The extension retains ownership and temporary reports until termination can be confirmed; a failed Windows tree termination leaves its report for temporary-directory cleanup.
+
+Run output streams to Test Results and the Behave Test Runner output channel. Each invocation uses a private temporary JSON report, removed after confirmed process termination. Missing, malformed, or structurally invalid reports show an execution error. Report diagnostics contain counts rather than report bodies. Runs have a 15 minute timeout, retain 256 KiB per output stream, share a 1 MiB display payload budget across streamed output and report-derived Test Results messages, with one truncation notice and fixed per-item status summaries outside that payload budget, and accept reports up to 16 MiB. Debug sessions remain open until the debugger terminates or the user cancels.
+
+`behaveTestRunner.outputFormat` selects Behave's visible `pretty`, `plain`, `json`, `progress` or `steps` formatter. Per-call execution options override the captured project setting; the default is `pretty`. Selecting `steps` displays step definitions while still executing tests. Captured runs send the selected visible format to stdout and keep a separate private JSON formatter for Test Explorer outcomes.
+
+`junit` enables Behave's native JUnit reporter with pretty console output. XML remains in the native `junit_directory`, or `reports` relative to the project's working directory by default. Behave owns overwrite and partial-output behavior; private report cleanup leaves this XML intact. These user artifacts are outside the in-memory report and display limits. Debug uses the same formatter and native JUnit choice while preserving native human-output destinations. Existing native reporter settings remain effective under ordinary format choices.
+
+Native formatter destinations retain Behave's own behavior, including format-only configuration, a standalone outfile, and unmatched `-f`/`-o` flags in `behaveCommand`. Captured runs keep the private report independent of those destinations. If native configuration sends the selected format to a file, that file is retained and the same format also reaches Test Explorer output. Behave still rejects invalid native configurations such as more outfiles than formatters. Custom aliases that replace built-in formatters are outside this supported-format contract.
+
+Command settings accept executable prefixes such as `behave`, `python -m behave`, `"/path with spaces/python" -m behave`, `poetry run behave`, or `uv run behave`. Arguments from files, tags, and scenario names are passed directly to the executable. Migrate shell aliases, environment assignments, pipes, redirects, substitutions, explicit shell hosts, and Windows `.cmd` or `.bat` shims to an executable or Python module command. Debug supports a bare framework tool with the selected Python interpreter or an explicit Python module command; wrappers are available for Run. Parallel execution supports Behave with at most 16 workers and reports failed workers through the initiating command; pytest-bdd parallel requests are rejected before launch.
+
+Each workspace folder has its own framework, Python command, working directory, tags, dry-run, discovery pattern and worker limit. File and Test Explorer selections use the containing folder. Relative working directories resolve against that folder. Open the containing folder before running a file outside the workspace. Settings are captured for each operation; later runs use changed settings.
+
+Run All and workspace tag commands visit all projects sequentially under one cancellation and output budget. Parallel runs process Behave projects sequentially, with up to 16 workers inside each project; a request containing pytest-bdd is rejected before any worker starts. Debugging uses the selected project's VS Code folder and configured cwd. pytest-bdd uses actual collected Python bindings, so module/function names and parameter IDs can differ from Gherkin display names. Selecting a scenario or Examples row runs every matching collected variant and combines their outcomes. Native pytest configuration is loaded from the configured cwd; feature selection collects within its project and excludes unrelated tests. Workspace suite/tag commands retain native testpaths and ordinary pytest tests. Collection-only runs report skipped outcomes.
+
+The collection adapter supports pytest-bdd 8.x and 9.x metadata. It maps at most 10,000 nodes, reads feature inputs up to 16 MiB and retains 1 MiB of report detail. Unsupported or missing bindings fail with an error instead of guessing a Python target. Distributed pytest execution remains unsupported.
 
 ## Configuration
 
@@ -201,7 +225,7 @@ You can override this by setting a specific command in your configuration.
 ```json
 {
   "behaveTestRunner.behaveCommand": "python3 -m behave",
-  "behaveTestRunner.workingDirectory": "${workspaceFolder}/tests",
+  "behaveTestRunner.workingDirectory": "tests",
   "behaveTestRunner.autoDiscoverTests": true,
   "behaveTestRunner.testFilePattern": "**/features/**/*.feature",
   "behaveTestRunner.enableCodeLens": true,
@@ -321,14 +345,16 @@ The `priority` setting determines which extension takes precedence when multiple
 
 #### **Automatic Detection Priority**
 
-1. **Explicit Configuration**: Framework with configuration files takes precedence
+1. **Explicit Setting**: `behaveTestRunner.framework` wins, including `"behave"`, while automatic detection is enabled. Without an explicit setting, detection examines each project's working directory
+
+2. **Configuration Files**: Framework with configuration files takes precedence
    - `behave.ini`, `.behaverc` → behave
    - `pytest.ini` with pytest-bdd → pytest-bdd
 
-2. **File Pattern Fallback**: When no explicit config found
+3. **File Pattern Fallback**: When no explicit config found
    - `.feature` files + Python test files → **defaults to behave**
 
-3. **Default**: Always behave (for backward compatibility)
+4. **Default**: Always behave (for backward compatibility)
 
 #### **Conflict Prevention**
 
@@ -361,14 +387,27 @@ The extension automatically detects your BDD framework, but you can also configu
   "behaveTestRunner.framework": "behave",              // "behave" or "pytest-bdd"
   "behaveTestRunner.autoDetectFramework": true,        // Enable automatic framework detection
   "behaveTestRunner.behaveCommand": "behave",          // Command for Behave framework
-  "behaveTestRunner.pytestCommand": "pytest",          // Command for pytest-bdd framework
-  "behaveTestRunner.pytestBddFilePattern": "**/*_test.py"  // File pattern for pytest-bdd tests
+  "behaveTestRunner.pytestCommand": "pytest"           // Command for pytest-bdd framework
 }
 ```
 
+### Pytest-bdd collection
+
+Pytest controls which Python files it collects. Configure `python_files` and `testpaths` in your project's native pytest configuration, for example `pytest.ini`:
+
+```ini
+[pytest]
+python_files = test_*.py *_test.py
+testpaths = tests
+```
+
+Configuration is resolved from `behaveTestRunner.workingDirectory`. The workspace Run All command honors `testpaths`; selecting a feature or scenario searches its project for bindings using the same `python_files` rules. A command override such as `python -m pytest --override-ini=python_files=*_checks.py` in `behaveTestRunner.pytestCommand` takes precedence over the configuration file. Use this attached option form; the extension rejects standalone `key=value` command tokens. Changes apply to the next run.
+
+`behaveTestRunner.pytestBddFilePattern` was unused and is deprecated. Remove it from VS Code settings and use native pytest configuration instead. `behaveTestRunner.testFilePattern` still controls which `.feature` files appear in Test Explorer.
+
 ### Framework Auto-Detection
 
-The extension automatically detects your framework based on:
+When no framework setting is explicitly configured and automatic detection is enabled, the extension detects each project's framework based on:
 
 - **Behave**: Looks for `.behaverc`, `behave.ini`, or behave configuration in `setup.cfg`/`pyproject.toml`
 - **pytest-bdd**: Looks for `pytest.ini`, `pytest-bdd` in `pyproject.toml`, or pytest-bdd imports
@@ -430,7 +469,7 @@ npm run compile
 npm test
 
 # Package extension
-npm run package
+npm run package:vsix
 ```
 
 ### Development Scripts
@@ -442,8 +481,8 @@ npm run package
 | `npm run lint`             | Run ESLint                             |
 | `npm run lint:fix`         | Fix ESLint issues                      |
 | `npm test`                 | Run all tests                          |
-| `npm run package`          | Create VSIX package                    |
-| `npm run package:vsix`     | Create VSIX package with version       |
+| `npm run package`          | Build the production bundle            |
+| `npm run package:vsix`     | Build and verify dist/name-version.vsix |
 | `npm run dev`              | Start development mode                 |
 | `npm run test:unit`        | Run unit tests only                    |
 | `npm run test:integration` | Run integration tests only             |
@@ -534,5 +573,6 @@ See [CHANGELOG.md](CHANGELOG.md) for a list of changes and version history.
 - [pytest-bdd](https://pytest-bdd.readthedocs.io/) - pytest plugin for BDD
 - [VS Code Extension API](https://code.visualstudio.com/api) - Extension development framework
 - [Gherkin](https://cucumber.io/docs/gherkin/) - BDD syntax specification
+- [gherkin-official](https://github.com/cucumber/gherkin) - bundled keyword catalog
 - [Cucumber (Gherkin) Full Support](https://marketplace.visualstudio.com/items?itemName=alexkrechik.cucumberautocomplete) - VS Code extension for Gherkin syntax highlighting and autocomplete
 - [Freepik](https://www.freepik.com/) - Extension icon design

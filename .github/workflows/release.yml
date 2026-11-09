@@ -9,6 +9,8 @@ jobs:
   build-and-release:
     name: Build and Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
@@ -25,14 +27,17 @@ jobs:
       with:
         python-version: '3.12'
         
-    - name: Install Behave
+    - name: Install test frameworks
       run: |
         python -m pip install --upgrade pip
-        pip install behave
+        python -m pip install -r src/test/fixtures/execution/requirements.txt
         
     - name: Install dependencies
       run: npm ci
       
+    - name: Verify release tag before building
+      run: node scripts/release.cjs check-tag
+
     - name: Verify prerequisites
       run: |
         echo "Verifying prerequisites..."
@@ -53,60 +58,10 @@ jobs:
         xvfb-run -a npm test
         echo "✅ All tests passed"
       
-    - name: Build extension
-      run: |
-        echo "Building extension..."
-        npm run compile
-        echo "✅ Extension built successfully"
-      
-    - name: Package extension
-      run: |
-        echo "Packaging extension..."
-        npm run package
-        echo "✅ Extension packaged successfully"
-      
-    - name: Create VSIX package
-      run: |
-        echo "Creating VSIX package..."
-        npm run package:vsix
-        echo "✅ VSIX package created"
-      
-    - name: Install vsce
-      run: |
-        echo "Installing vsce (Visual Studio Code Extension Manager)..."
-        npm install -g @vscode/vsce
-        vsce --version
-        echo "✅ vsce installed successfully"
-      
-    - name: Get version from package.json
-      id: get_version
-      run: |
-        VERSION=$(node -p "require('./package.json').version")
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Release version: $VERSION"
-      
-    - name: Get tag version
-      id: get_tag
-      run: |
-        TAG_VERSION=${GITHUB_REF#refs/tags/}
-        echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
-        echo "Tag version: $TAG_VERSION"
-      
-    - name: Verify version consistency
-      run: |
-        PKG_VERSION=${{ steps.get_version.outputs.version }}
-        TAG_VERSION=${{ steps.get_tag.outputs.tag_version }}
-        
-        if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
-          echo "❌ Version mismatch!"
-          echo "Package.json version: $PKG_VERSION"
-          echo "Git tag version: $TAG_VERSION"
-          echo "These must match for a release."
-          exit 1
-        fi
-        
-        echo "✅ Version consistency verified: $PKG_VERSION"
-      
+    - name: Create and verify VSIX package
+      id: artifact
+      run: npm run package:vsix
+
     - name: Generate changelog
       id: changelog
       run: |
@@ -131,9 +86,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name }}
-        name: Behave Test Runner v${{ steps.get_version.outputs.version }}
+        name: Behave Test Runner v${{ steps.artifact.outputs.version }}
         body: |
-          ## Behave Test Runner Extension v${{ steps.get_version.outputs.version }}
+          ## Behave Test Runner Extension v${{ steps.artifact.outputs.version }}
 
           ### Changes in this release:
           ${{ steps.changelog.outputs.changelog }}
@@ -167,39 +122,26 @@ jobs:
           See the [README](https://github.com/upscaled-dev/behave-vsc-extension#readme) for detailed usage instructions.
         draft: false
         prerelease: false
-        files: ./dist/behave-test-runner-${{ steps.get_version.outputs.version }}.vsix
+        files: ${{ steps.artifact.outputs.artifact }}
+        fail_on_unmatched_files: true
       
     - name: Publish to Visual Studio Marketplace
       env:
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        VERSION: ${{ steps.get_version.outputs.version }}
-      run: |
-        echo "Publishing to Visual Studio Marketplace..."
+      run: node scripts/release.cjs publish
 
-        if [[ -z "$VSCE_PAT" ]]; then
-          echo "⚠️  VSCE_PAT secret is not set. Skipping marketplace publish."
-          echo "To enable marketplace publishing, add the VSCE_PAT secret to your repository."
-          exit 0
-        fi
-
-        # vsce reads VSCE_PAT from env; no separate login step needed.
-        vsce publish --packagePath "./dist/behave-test-runner-${VERSION}.vsix"
-
-        echo "✅ Extension published to Visual Studio Marketplace"
-      
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: release-artifacts
-        path: |
-          dist/
-          *.vsix
+        path: ${{ steps.artifact.outputs.artifact }}
+        if-no-files-found: error
         retention-days: 30
       
     - name: Notify success
       env:
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        VERSION: ${{ steps.get_version.outputs.version }}
+        VERSION: ${{ steps.artifact.outputs.version }}
         RELEASE_URL: ${{ steps.create_release.outputs.url }}
       run: |
         echo "🎉 Release v${VERSION} created successfully!"

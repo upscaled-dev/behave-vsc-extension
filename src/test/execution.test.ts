@@ -3,6 +3,8 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import { FeatureParser } from "../parsers/feature-parser";
+import { Logger } from "../utils/logger";
+import { afterOutput } from "./output-channel";
 
 suite("Test Execution Test Suite", () => {
   const featureParser = FeatureParser.create();
@@ -248,24 +250,15 @@ suite("Test Execution Test Suite", () => {
   });
 
   // Test command execution with output capture
-  test("Should capture command output", () => {
-    // Test that we can create output channel
-    const outputChannel =
-      vscode.window.createOutputChannel("Behave Test Runner");
-    assert.ok(outputChannel, "Should create output channel");
-
-    // Test that we can write to output channel
-    outputChannel.appendLine("Test output line");
-    outputChannel.appendLine("Another test line");
-
-    // Test that output channel is accessible
-    assert.ok(
-      outputChannel.name === "Behave Test Runner",
-      "Should have correct name"
-    );
-
-    // Clean up
-    outputChannel.dispose();
+  test("Should capture command output", async () => {
+    const logger = new Logger();
+    try {
+      const text = await afterOutput(logger["outputChannel"], (value) => value.includes("Captured execution output\nAnother execution line"), () => {
+        logger.appendOutput("Captured execution output\nAnother execution line\n");
+        logger.showOutput();
+      });
+      assert.ok(text.includes("Captured execution output\nAnother execution line"));
+    } finally {logger.dispose();}
   });
 
   // Test error handling in test execution

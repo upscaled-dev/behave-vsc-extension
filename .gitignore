@@ -71,3 +71,7 @@ Thumbs.db
 # Output of 'npm pack'
 *.tgz
 .yarn-integrity
+
+# Shipped Python plugin bytecode
+python/**/__pycache__/
+python/**/*.pyc

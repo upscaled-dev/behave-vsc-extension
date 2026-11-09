@@ -1,0 +1,84 @@
+name: Installed extension journeys
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['validation/installed-*']
+  pull_request:
+    paths:
+      - '.github/workflows/installed-journeys.yml'
+      - 'scripts/test/installed/**'
+
+permissions:
+  contents: read
+
+jobs:
+  installed:
+    name: '${{ matrix.os }} / vscode ${{ matrix.host }}'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        host: ['1.142.0', '1.99.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          python -m pip install -r src/test/fixtures/execution/requirements.txt
+      - name: Check runner boundaries and compile host helper
+        run: |
+          node --test scripts/test/installed/run.test.cjs
+          npm run compile-tests
+      - name: Build and verify the packaged extension
+        run: npm run package:vsix
+      - name: Install Linux display support
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Run installed journeys on Linux
+        if: runner.os == 'Linux'
+        env:
+          TEST_HOST: '${{ matrix.host }}'
+          TEST_PYTHON: '${{ env.pythonLocation }}/bin/python'
+        shell: bash
+        run: |
+          artifact="$(node -p "'dist/behave-test-runner-' + require('./package.json').version + '.vsix'")"
+          xvfb-run -a node scripts/test/installed/run.cjs --artifact "$artifact" --output installed-evidence --host "$TEST_HOST" --python "$TEST_PYTHON"
+      - name: Run installed journeys on macOS
+        if: runner.os == 'macOS'
+        env:
+          TEST_HOST: '${{ matrix.host }}'
+          TEST_PYTHON: '${{ env.pythonLocation }}/bin/python'
+        shell: bash
+        run: |
+          artifact="$(node -p "'dist/behave-test-runner-' + require('./package.json').version + '.vsix'")"
+          node scripts/test/installed/run.cjs --artifact "$artifact" --output installed-evidence --host "$TEST_HOST" --python "$TEST_PYTHON"
+      - name: Run installed journeys on Windows
+        if: runner.os == 'Windows'
+        env:
+          TEST_HOST: '${{ matrix.host }}'
+          TEST_PYTHON: '${{ env.pythonLocation }}\python.exe'
+        shell: pwsh
+        run: |
+          $artifact = node -p "'dist/behave-test-runner-' + require('./package.json').version + '.vsix'"
+          node scripts/test/installed/run.cjs --artifact $artifact --output installed-evidence --host $env:TEST_HOST --python $env:TEST_PYTHON
+      - name: Retain installed acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'installed-${{ matrix.os }}-${{ matrix.host }}'
+          path: |
+            installed-evidence/
+            dist/*.vsix
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
